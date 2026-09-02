@@ -16,6 +16,10 @@ module VBO
           [execute_ruby_tool, reload_file_tool, list_instances_tool, get_console_output_tool]
         end
 
+        def named?(name)
+          all.any? { |tool| tool.name_value.to_s == name }
+        end
+
         private
 
         def execute_ruby_tool

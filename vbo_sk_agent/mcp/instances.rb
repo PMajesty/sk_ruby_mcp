@@ -8,6 +8,8 @@
 
 require 'json'
 require 'fileutils'
+# Time#iso8601 lives in stdlib 'time', not core Time, on older SketchUp Ruby.
+require 'time'
 
 module VBO
   module SkAgent
@@ -100,12 +102,16 @@ module VBO
         end
 
         def process_alive?(pid)
-          return false unless pid.is_a?(Integer) && pid > 0
-          # Windows: tasklist filter
-          result = `tasklist /FI "PID eq #{pid}" /NH 2>NUL`
-          result.include?(pid.to_s)
-        rescue
-          true  # an toàn: nếu không check được, coi như còn sống (tránh xóa nhầm)
+          # Windows `tasklist` cannot see macOS/Linux SketchUp PIDs, so stale
+          # instance rows would never be removed on those platforms.
+          pid = pid.to_i
+          return false unless pid > 0
+          Process.kill(0, pid)
+          true
+        rescue Errno::ESRCH
+          false
+        rescue Errno::EPERM
+          true
         end
 
         def version_year

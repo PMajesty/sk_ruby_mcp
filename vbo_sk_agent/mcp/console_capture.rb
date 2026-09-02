@@ -8,6 +8,8 @@
 # Ported from VBO::LoadPlugins::ConsoleCapture (production-ready 2026-04-26)
 
 require 'stringio'
+# Time#iso8601 lives in stdlib 'time', not core Time, on older SketchUp Ruby.
+require 'time'
 
 module VBO
   module SkAgent

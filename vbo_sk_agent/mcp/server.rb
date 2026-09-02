@@ -12,6 +12,9 @@
 require 'socket'
 require 'json'
 require 'fileutils'
+# Time#iso8601 lives in stdlib 'time', not core Time, on older SketchUp Ruby.
+require 'time'
+require_relative 'frontmost_policy'
 
 module VBO
   module SkAgent
@@ -25,6 +28,10 @@ module VBO
       PUMP_INTERVAL = 0.01
       DRAIN_MAX     = 3
       READ_TIMEOUT  = 2.0
+      # Hold tools/call until the Mac window is key; see McpFrontmost.
+      FRONTMOST_CHECK_INTERVAL = 0.05
+      ACTIVATE_RETRY_INTERVAL = 0.2
+      FRONTMOST_PROBE_TIMEOUT = 0.3
 
       @server         = nil unless defined?(@server)
       @timer_id       = nil unless defined?(@timer_id)
@@ -34,6 +41,10 @@ module VBO
       @mcp            = nil unless defined?(@mcp)
       @mcp_ready      = false unless defined?(@mcp_ready)
       @stats          = { requests: 0, errors: 0, started_at: nil, tick_count: 0 } unless defined?(@stats)
+      @pending_mcp    = [] unless defined?(@pending_mcp)
+      @frontmost_checked_at = nil unless defined?(@frontmost_checked_at)
+      @frontmost_requested_at = nil unless defined?(@frontmost_requested_at)
+      @frontmost_cached = nil unless defined?(@frontmost_cached)
 
       class << self
         attr_reader :port, :preferred_port, :running, :stats
@@ -68,6 +79,10 @@ module VBO
             register_in_global_instances
             @running  = true
             @stats    = { requests: 0, errors: 0, started_at: Time.now, tick_count: 0 }
+            @pending_mcp = []
+            @frontmost_checked_at = nil
+            @frontmost_requested_at = nil
+            @frontmost_cached = nil
             @timer_id = UI.start_timer(PUMP_INTERVAL, true) { tick }
             puts "[SkAgent MCP] Server on 127.0.0.1:#{@port}  (preferred=#{@port == @preferred_port})"
             puts "[SkAgent MCP] Stop: VBO::SkAgent::McpServer.stop"
@@ -86,6 +101,7 @@ module VBO
           return unless @running
           @running = false
           UI.stop_timer(@timer_id) if @timer_id
+          reject_pending_mcp
           begin; @server.close if @server; rescue; end
           @server = @timer_id = nil
           File.delete(PORT_FILE) if File.exist?(PORT_FILE)
@@ -147,6 +163,7 @@ module VBO
         # Main timer callback — runs entirely on SU main thread, zero GVL wait
         def tick
           @stats[:tick_count] += 1
+          flush_pending_mcp
           DRAIN_MAX.times do
             # exception: false → returns :wait_readable instead of raising.
             # Critical: prevents TracePoint flooding when scoped capture is active
@@ -161,21 +178,26 @@ module VBO
             end
             break if client == :wait_readable || client.nil?
 
+            held = false
             begin
               client.setsockopt(Socket::IPPROTO_TCP, Socket::TCP_NODELAY, 1) rescue nil
-              handle_client(client)
-            rescue => e
+              held = handle_client(client)
+            # ScriptError (SyntaxError, LoadError) is not a StandardError.
+            rescue StandardError, ScriptError => e
               @stats[:errors] += 1
-              begin; write_response(client, 500, { 'error' => e.message }); rescue; end
+              held = false
+              begin; write_response(client, 500, { 'error' => "#{e.class}: #{e.message}" }); rescue; end
             ensure
-              begin; client.close; rescue; end
+              unless held
+                begin; client.close; rescue; end
+              end
             end
           end
         end
 
         def handle_client(client)
           request_line = read_line_with_timeout(client)
-          return unless request_line
+          return false unless request_line
 
           headers = {}
           loop do
@@ -187,18 +209,31 @@ module VBO
 
           host = headers['host'] || ''
           unless host =~ /\A(127\.0\.0\.1|localhost)(:\d+)?\z/
-            return write_response(client, 403, { 'error' => 'Origin denied' })
+            write_response(client, 403, { 'error' => 'Origin denied' })
+            return false
+          end
+          if denied_browser_origin?(headers['origin']) || denied_browser_origin?(headers['referer'])
+            write_response(client, 403, { 'error' => 'Origin denied' })
+            return false
           end
 
           body = nil
           if (len_str = headers['content-length'])
             len = len_str.to_i
-            return write_response(client, 413, { 'error' => 'Body too large' }) if len > MAX_BODY
+            if len > MAX_BODY
+              write_response(client, 413, { 'error' => 'Body too large' })
+              return false
+            end
             body = client.read(len) if len > 0
           end
 
           method_verb, path, = request_line.split(' ', 3)
+          if method_verb == 'POST' && path == '/mcp' && should_wait_for_frontmost?(body)
+            return enqueue_pending_mcp(client, body)
+          end
+
           route(client, method_verb, path, body)
+          false
         end
 
         def read_line_with_timeout(client, timeout_sec = READ_TIMEOUT)
@@ -217,11 +252,7 @@ module VBO
             ))
 
           when ['POST', '/mcp']
-            @stats[:requests] += 1
-            setup_mcp unless @mcp_ready
-            response_json = @mcp.handle_json(body || '{}')
-            body_str = response_json.is_a?(String) ? response_json : response_json.to_json
-            write_raw_response(client, 200, 'application/json', body_str)
+            dispatch_mcp(client, body)
 
           when ['POST', '/shutdown']
             write_response(client, 200, { 'ok' => true, 'message' => 'Shutting down...' })
@@ -230,6 +261,196 @@ module VBO
           else
             write_response(client, 404, { 'error' => "Not found: #{method} #{path}" })
           end
+        end
+
+        def dispatch_mcp(client, body)
+          @stats[:requests] += 1
+          begin
+            setup_mcp unless @mcp_ready
+            response_json = @mcp.handle_json(body || '{}')
+            body_str = response_json.is_a?(String) ? response_json : response_json.to_json
+            write_raw_response(client, 200, 'application/json', body_str)
+          rescue StandardError, ScriptError => e
+            @stats[:errors] += 1
+            puts "[SkAgent MCP] /mcp failed: #{e.class}: #{e.message}"
+            write_response(client, 500, { 'error' => "#{e.class}: #{e.message}" })
+          end
+        end
+
+        def should_wait_for_frontmost?(body)
+          wait_required = frontmost_wait_required?
+          tool_call = wait_required && registered_mcp_tool_call?(body)
+          ui_ready = tool_call ? application_ui_ready? : true
+          McpFrontmost.should_defer?(
+            wait_required: wait_required,
+            tool_call: tool_call,
+            ui_ready: ui_ready
+          )
+        end
+
+        def frontmost_wait_required?
+          return false unless defined?(Sketchup)
+          return false unless Sketchup.respond_to?(:platform)
+
+          McpFrontmost.wait_required?(
+            platform: Sketchup.platform,
+            version: Sketchup.version
+          )
+        end
+
+        def registered_mcp_tool_call?(body)
+          data = JSON.parse(body.to_s.empty? ? '{}' : body)
+          return false unless data['method'] == 'tools/call'
+
+          params = data['params']
+          name = params.is_a?(Hash) ? params['name'].to_s : ''
+          return false unless name =~ /\A[\w.-]+\z/
+
+          setup_mcp unless @mcp_ready
+          VBO::SkAgent::McpTools.named?(name)
+        rescue JSON::ParserError
+          false
+        end
+
+        def denied_browser_origin?(value)
+          return false if value.nil? || value.to_s.strip.empty?
+
+          value !~ %r{\Ahttps?://(127\.0\.0\.1|localhost)(:\d+)?(/|\z)}i
+        end
+
+        def enqueue_pending_mcp(client, body)
+          @pending_mcp ||= []
+          if McpFrontmost.queue_full?(@pending_mcp.length)
+            write_response(client, 503, { 'error' => 'Too many pending MCP calls' })
+            return false
+          end
+
+          @pending_mcp << { client: client, body: body, queued_at: Time.now }
+          request_frontmost
+          true
+        end
+
+        def flush_pending_mcp
+          pending = @pending_mcp
+          return if pending.nil? || pending.empty?
+
+          request_frontmost
+          ui_state = application_ui_ready_cached?
+          still_waiting = []
+          pending.each do |item|
+            queued_at = item[:queued_at]
+            if queued_at && !McpFrontmost.dispatch_ready?(
+                 waited: Time.now - queued_at,
+                 ui_ready: ui_state
+               )
+              still_waiting << item
+            else
+              complete_pending_mcp(item)
+            end
+          end
+          @pending_mcp = still_waiting
+        end
+
+        def complete_pending_mcp(item)
+          client = item[:client]
+          begin
+            dispatch_mcp(client, item[:body])
+          rescue StandardError, ScriptError => e
+            @stats[:errors] += 1
+            begin; write_response(client, 500, { 'error' => "#{e.class}: #{e.message}" }); rescue; end
+          ensure
+            begin; client.close; rescue; end
+          end
+        end
+
+        def reject_pending_mcp
+          items = Array(@pending_mcp)
+          @pending_mcp = []
+          items.each do |item|
+            client = item[:client]
+            begin
+              write_response(client, 500, { 'error' => 'Server stopping' })
+            rescue StandardError
+              nil
+            end
+            begin
+              client.close
+            rescue StandardError
+              nil
+            end
+          end
+        end
+
+        def application_ui_ready_cached?
+          now = Time.now
+          last = @frontmost_checked_at
+          if last.nil? || (now - last) >= FRONTMOST_CHECK_INTERVAL
+            @frontmost_cached = application_ui_ready?
+            @frontmost_checked_at = now
+          end
+          @frontmost_cached
+        end
+
+        def application_ui_ready?
+          # IO.popen close waits for osascript; a hung System Events would freeze the SU pump.
+          pid = Integer(Process.pid)
+          reader, writer = IO.pipe
+          child = Process.spawn(
+            '/usr/bin/osascript',
+            '-e', 'tell application "System Events"',
+            '-e', "tell (first process whose unix id is #{pid})",
+            '-e', 'if frontmost is false then return false',
+            '-e', 'return exists (window 1 whose value of attribute "AXMain" is true)',
+            '-e', 'end tell',
+            '-e', 'end tell',
+            out: writer,
+            err: writer
+          )
+          writer.close
+          Process.detach(child)
+          begin
+            unless IO.select([reader], nil, nil, FRONTMOST_PROBE_TIMEOUT)
+              begin
+                Process.kill('TERM', child)
+              rescue StandardError
+                nil
+              end
+              return nil
+            end
+            chunk = begin
+              reader.read_nonblock(64)
+            rescue EOFError
+              ''
+            end
+            chunk.to_s.strip == 'true'
+          ensure
+            begin
+              reader.close unless reader.closed?
+            rescue StandardError
+              nil
+            end
+          end
+        rescue StandardError
+          nil
+        end
+
+        def request_frontmost
+          return unless frontmost_wait_required?
+
+          now = Time.now
+          last = @frontmost_requested_at
+          return if last && (now - last) < ACTIVATE_RETRY_INTERVAL
+
+          @frontmost_requested_at = now
+          pid = Integer(Process.pid)
+          child = Process.spawn(
+            '/usr/bin/osascript',
+            '-e',
+            "tell application \"System Events\" to set frontmost of first process whose unix id is #{pid} to true"
+          )
+          Process.detach(child)
+        rescue StandardError => e
+          puts "[SkAgent MCP] request_frontmost failed: #{e.class}: #{e.message}"
         end
 
         def setup_mcp
@@ -263,7 +484,7 @@ module VBO
         STATUS_TEXT = {
           200 => 'OK', 400 => 'Bad Request', 403 => 'Forbidden',
           404 => 'Not Found', 413 => 'Payload Too Large',
-          500 => 'Internal Server Error'
+          500 => 'Internal Server Error', 503 => 'Service Unavailable'
         }.freeze
 
         def write_response(client, status_code, body_obj)

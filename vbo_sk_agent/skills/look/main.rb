@@ -17,13 +17,18 @@ module Look
 
     # 1. Capture screenshot
     img_path = File.join(VISION_DIR, 'capture.png')
-    view.write_image(
-      filename: img_path,
-      width: width,
-      height: height,
-      antialias: true,
-      compression: 0.9
-    )
+    # Keyword write_image arrived in SketchUp 2023; older builds take positional args.
+    if Sketchup.version.to_i >= 23
+      view.write_image(
+        filename: img_path,
+        width: width,
+        height: height,
+        antialias: true,
+        compression: 0.9
+      )
+    else
+      view.write_image(img_path, width, height, true, 0.9)
+    end
 
     # 2. Copy to clipboard
     clipboard_ok = copy_to_clipboard(img_path)

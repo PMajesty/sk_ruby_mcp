@@ -79,9 +79,10 @@ module MCP
       end
     end
 
-    def method_missing(name, ...)
+    # `...` argument forwarding needs Ruby 2.7+; SketchUp 2017–2020 ship 2.2/2.5.
+    def method_missing(name, *args, **kwargs, &block)
       if @context.respond_to?(name)
-        @context.public_send(name, ...)
+        @context.public_send(name, *args, **kwargs, &block)
       else
         super
       end
