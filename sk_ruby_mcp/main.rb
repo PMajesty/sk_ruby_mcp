@@ -79,7 +79,7 @@ module SkRubyMcp
       end
 
       def build_handler
-        executor = Runtime::RubyExecutor.new
+        executor = Runtime::RubyExecutor.new(default_timeout_s: Settings.get('execution_timeout_s'))
         tool = Tools::ExecuteRuby.new(
           executor: executor,
           wrap_in_operation_by_default: Settings.get('wrap_in_operation')

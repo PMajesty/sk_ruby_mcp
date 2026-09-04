@@ -113,8 +113,8 @@ module TestSupport
       @calls = []
     end
 
-    def execute(code, operation_name:, wrap_in_operation:)
-      @calls << [code, operation_name, wrap_in_operation]
+    def execute(code, operation_name:, wrap_in_operation:, timeout_s: nil)
+      @calls << [code, operation_name, wrap_in_operation, timeout_s]
       @result
     end
 

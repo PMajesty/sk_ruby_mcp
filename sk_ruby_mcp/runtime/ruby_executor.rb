@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'timeout'
+
 module SkRubyMcp
   module Runtime
     # Адаптер к SketchUp: единственное место, где исполнитель обращается к API приложения.
@@ -26,7 +28,7 @@ module SkRubyMcp
     # захват stdout / stderr, структурированные ошибки, лимиты на объём вывода.
     class RubyExecutor
       Limits = Struct.new(:stream_bytes, :value_bytes, :backtrace_frames, keyword_init: true)
-      DEFAULT_LIMITS = Limits.new(stream_bytes: 256 * 1024, value_bytes: 64 * 1024, backtrace_frames: 15).freeze
+      DEFAULT_LIMITS = Limits.new(stream_bytes: 64 * 1024, value_bytes: 32 * 1024, backtrace_frames: 15).freeze
       EVAL_FILENAME = '(execute_ruby)'
       # SystemExit перехватываем, чтобы exit в коде агента не закрыл SketchUp.
       # NoMemoryError и SignalException намеренно пропускаем дальше.
@@ -34,11 +36,17 @@ module SkRubyMcp
       BUSY_MESSAGE = 'Executor is busy: a previous execute_ruby call has not finished ' \
                      '(it is probably blocked in a modal dialog)'
       TOPLEVEL_BINDING_SOURCE = -> { TOPLEVEL_BINDING }
+      # Ниже клиентских лимитов Cursor и Codex (60 с), чтобы сервер успел откатить операцию и ответить.
+      DEFAULT_TIMEOUT_S = 50.0
+      MAX_TIMEOUT_S = 3600.0
+      TIMEOUT_LIBRARY_FRAME = '/timeout.rb:'
 
-      def initialize(host: SketchupHost.new, limits: DEFAULT_LIMITS, binding_source: TOPLEVEL_BINDING_SOURCE)
+      def initialize(host: SketchupHost.new, limits: DEFAULT_LIMITS, binding_source: TOPLEVEL_BINDING_SOURCE,
+                     default_timeout_s: DEFAULT_TIMEOUT_S)
         @host = host
         @limits = limits
         @binding_source = binding_source
+        @default_timeout_s = default_timeout_s
         @busy = false
       end
 
@@ -50,12 +58,13 @@ module SkRubyMcp
         !@host.active_model.nil?
       end
 
-      def execute(code, operation_name:, wrap_in_operation:)
+      # timeout_s: nil берёт значение по умолчанию, 0 отключает ограничение.
+      def execute(code, operation_name:, wrap_in_operation:, timeout_s: nil)
         return busy_result if @busy
 
         @busy = true
         begin
-          perform(code, operation_name, wrap_in_operation)
+          perform(code, operation_name, wrap_in_operation, normalize_timeout(timeout_s))
         ensure
           @busy = false
         end
@@ -63,20 +72,33 @@ module SkRubyMcp
 
       private
 
-      def perform(code, operation_name, wrap_in_operation)
+      def normalize_timeout(timeout_s)
+        seconds = timeout_s.nil? ? @default_timeout_s : timeout_s
+        Float(seconds).clamp(0.0, MAX_TIMEOUT_S)
+      rescue ArgumentError, TypeError
+        @default_timeout_s
+      end
+
+      def perform(code, operation_name, wrap_in_operation, timeout_s)
         started_at = Clock.now
         model = @host.active_model
         wrap = wrap_in_operation && !model.nil?
         stdout = OutputCapture.new(@limits.stream_bytes)
         stderr = OutputCapture.new(@limits.stream_bytes)
         outcome = with_captured_streams(stdout, stderr) do
-          run_in_operation(model, operation_name, wrap) { evaluate(code) }
+          run_in_operation(model, operation_name, wrap) { evaluate(code, timeout_s) }
         end
         build_result(outcome, stdout, stderr, model, started_at)
       end
 
-      def evaluate(code)
-        @binding_source.call.eval(code, EVAL_FILENAME, 1)
+      # Timeout прерывает только Ruby-код: один длинный вызов API SketchUp доработает до конца,
+      # после чего исключение будет поднято. Внутри блока используется служебное исключение
+      # Timeout, которое не перехватывается rescue StandardError в коде агента.
+      def evaluate(code, timeout_s)
+        return @binding_source.call.eval(code, EVAL_FILENAME, 1) unless timeout_s.positive?
+
+        message = "execution exceeded #{timeout_s} s and was interrupted; split the work into smaller calls"
+        Timeout.timeout(timeout_s, nil, message) { @binding_source.call.eval(code, EVAL_FILENAME, 1) }
       end
 
       # Возвращает [:ok, значение] или [:error, исключение]; операция undo закрывается в любом случае.
@@ -158,7 +180,7 @@ module SkRubyMcp
 
       # Кадры кода агента идут до первого кадра исполнителя; внутренние кадры клиенту не нужны.
       def visible_backtrace(error)
-        frames = Array(error.backtrace)
+        frames = Array(error.backtrace).reject { |frame| frame.include?(TIMEOUT_LIBRARY_FRAME) }
         internal_start = frames.index { |frame| frame.start_with?(__FILE__) }
         visible = internal_start ? frames.first(internal_start) : frames
         visible = frames.first(3) if visible.empty?

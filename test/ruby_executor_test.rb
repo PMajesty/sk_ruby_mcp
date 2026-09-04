@@ -135,4 +135,25 @@ class RubyExecutorTest < Minitest::Test
     assert result.ok
     assert_includes result.return_value, 'inspect failed'
   end
+
+  def test_runaway_ruby_is_interrupted_and_the_operation_aborted
+    executor = RubyExecutor.new(host: @host, binding_source: -> { @sandbox_binding }, default_timeout_s: 0.2)
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    result = run_code('begin; 200_000_000.times { |i| i }; rescue => e; :swallowed; end', executor: executor)
+    elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+    refute result.ok
+    assert_equal 'Timeout::Error', result.error[:class]
+    assert_includes result.error[:message], 'exceeded 0.2 s'
+    assert_operator elapsed, :<, 2.0
+    assert_equal [[:start, 'Test op', true], [:abort]], @host.model.events
+    refute result.error[:backtrace].any? { |frame| frame.include?('timeout.rb') }
+  end
+
+  def test_per_call_timeout_overrides_the_default_and_zero_disables_it
+    executor = RubyExecutor.new(host: @host, binding_source: -> { @sandbox_binding }, default_timeout_s: 0.05)
+    slow = 'sleep 0.15; :done'
+    refute executor.execute(slow, operation_name: 'op', wrap_in_operation: false).ok
+    assert executor.execute(slow, operation_name: 'op', wrap_in_operation: false, timeout_s: 1).ok
+    assert executor.execute(slow, operation_name: 'op', wrap_in_operation: false, timeout_s: 0).ok
+  end
 end

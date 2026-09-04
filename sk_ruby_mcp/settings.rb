@@ -10,11 +10,13 @@ module SkRubyMcp
       'auto_start' => true,
       'pump_interval' => 0.05,
       'auth_token' => '',
-      'wrap_in_operation' => true
+      'wrap_in_operation' => true,
+      'execution_timeout_s' => 50.0
     }.freeze
     PORT_RANGE = (1024..65_535).freeze
     MIN_PUMP_INTERVAL = 0.01
     MAX_PUMP_INTERVAL = 1.0
+    MAX_EXECUTION_TIMEOUT_S = 3600.0
 
     class << self
       def get(key)
@@ -54,6 +56,7 @@ module SkRubyMcp
         case key
         when 'port' then PORT_RANGE.cover?(value) ? value : DEFAULTS['port']
         when 'pump_interval' then value.clamp(MIN_PUMP_INTERVAL, MAX_PUMP_INTERVAL)
+        when 'execution_timeout_s' then value.clamp(0.0, MAX_EXECUTION_TIMEOUT_S)
         else value
         end
       end

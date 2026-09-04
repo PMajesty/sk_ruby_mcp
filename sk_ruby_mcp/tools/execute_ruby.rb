@@ -17,16 +17,17 @@ module SkRubyMcp
         Behaviour:
         - Runs in the top-level binding like the Ruby Console: local variables persist between calls, methods and
           constants defined at top level stay defined for the session.
-        - The value of the last expression is returned as return_value (inspect, capped at 64 KB); puts/print output
-          is captured into stdout and warnings into stderr (256 KB each).
+        - The value of the last expression is returned as return_value (inspect, capped at 32 KB); puts/print output
+          is captured into stdout and warnings into stderr (64 KB each). Print only what you need.
         - Failures return isError with error.class, error.message and a backtrace whose frames point at
           (execute_ruby):LINE in your code. Fix the code and call again.
         - By default the whole call is one undo step: model.start_operation(operation_name, true), then commit, or
           abort on error. Pass wrap_in_operation=false for read-only queries or when your code manages its own
           operations.
-        - The SketchUp UI is blocked while the code runs and there is no server-side timeout: keep each call focused
-          and split long jobs into several calls. Never open modal dialogs (UI.messagebox, UI.inputbox, UI.openpanel,
-          UI.savepanel) and never call exit.
+        - The SketchUp UI is blocked while the code runs. A server-side timeout (default 50 s, override with
+          timeout_s) interrupts runaway Ruby and aborts the undo operation; a single long SketchUp API call cannot
+          be interrupted, so keep each call focused and split long jobs into several calls. Never open modal dialogs
+          (UI.messagebox, UI.inputbox, UI.openpanel, UI.savepanel) and never call exit.
 
         SketchUp API essentials:
         - The internal length unit is inches; use 10.mm, 2.5.m, 3.feet to convert.
@@ -53,33 +54,16 @@ module SkRubyMcp
             type: 'boolean',
             description: 'Wrap the call in a single undo operation (default true). Set false for read-only ' \
                          'queries or when the code manages its own start_operation / commit_operation.'
+          },
+          timeout_s: {
+            type: 'number',
+            minimum: 0,
+            description: 'Server-side limit in seconds for this call (default 50, 0 disables). Only Ruby-level ' \
+                         'code is interrupted; a long single SketchUp API call runs to completion first.'
           }
         },
         required: ['code'],
         additionalProperties: false
-      }.freeze
-
-      OUTPUT_SCHEMA = {
-        type: 'object',
-        properties: {
-          ok: { type: 'boolean' },
-          return_value: { type: %w[string null], description: 'inspect of the last expression, nil on error' },
-          stdout: { type: 'string' },
-          stderr: { type: 'string' },
-          error: {
-            type: %w[object null],
-            properties: {
-              class: { type: 'string' },
-              message: { type: 'string' },
-              backtrace: { type: 'array', items: { type: 'string' } }
-            },
-            required: %w[class message backtrace]
-          },
-          elapsed_ms: { type: 'number' },
-          truncated: { type: 'boolean' },
-          model_present: { type: 'boolean' }
-        },
-        required: %w[ok return_value stdout stderr error elapsed_ms truncated model_present]
       }.freeze
 
       ANNOTATIONS = {
@@ -95,7 +79,6 @@ module SkRubyMcp
         title: TITLE,
         description: DESCRIPTION,
         inputSchema: INPUT_SCHEMA,
-        outputSchema: OUTPUT_SCHEMA,
         annotations: ANNOTATIONS
       }.freeze
 
@@ -122,12 +105,18 @@ module SkRubyMcp
         result = @executor.execute(
           code,
           operation_name: operation_name(arguments),
-          wrap_in_operation: wrap_in_operation?(arguments)
+          wrap_in_operation: wrap_in_operation?(arguments),
+          timeout_s: timeout_s(arguments)
         )
         tool_result(result)
       end
 
       private
+
+      def timeout_s(arguments)
+        value = arguments['timeout_s']
+        value.is_a?(Numeric) && value >= 0 ? value.to_f : nil
+      end
 
       def operation_name(arguments)
         name = arguments['operation_name'].to_s.strip
@@ -153,10 +142,11 @@ module SkRubyMcp
         )
       end
 
+      # Единственное представление результата: текстовый блок. Дублировать его в structuredContent
+      # значило бы удваивать объём ответа при больших stdout.
       def tool_result(result)
         {
           content: [{ type: 'text', text: render_text(result) }],
-          structuredContent: result.to_h,
           isError: !result.ok
         }
       end
