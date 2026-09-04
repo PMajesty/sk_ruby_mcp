@@ -94,6 +94,14 @@ class HttpConnectionTest < Minitest::Test
     assert_equal 431, conn.rejection.status
   end
 
+  def test_complete_oversized_request_line_is_rejected_with_431
+    limits = HttpConnection::Limits.new(max_header_bytes: 64, max_body_bytes: 1024, read_deadline_s: 5, write_deadline_s: 0.5)
+    conn = connection(limits: limits)
+    send_bytes("GET /#{'a' * 200} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+    assert_equal :rejected, conn.pump(@now)
+    assert_equal 431, conn.rejection.status
+  end
+
   def test_malformed_request_line_and_content_length
     conn = connection
     send_bytes("HELLO\r\n\r\n")

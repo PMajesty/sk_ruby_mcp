@@ -141,10 +141,9 @@ module SkRubyMcp
 
       def parse_head
         match = HEADER_TERMINATOR.match(@buffer)
-        if match.nil?
-          reject(431, 'Request header too large') if @buffer.bytesize > @limits.max_header_bytes
-          return
-        end
+        header_bytes = match ? match.end(0) : @buffer.bytesize
+        return reject(431, 'Request header too large') if header_bytes > @limits.max_header_bytes
+        return if match.nil?
 
         head = @buffer.byteslice(0, match.begin(0))
         @buffer = @buffer.byteslice(match.end(0), @buffer.bytesize - match.end(0))
