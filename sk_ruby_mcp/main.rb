@@ -58,6 +58,7 @@ module SkRubyMcp
           #{Log::PREFIX} stats: #{running? ? @server.health : 'n/a'}
           #{Log::PREFIX} Cursor mcp.json: {"mcpServers":{"sketchup":{"url":"http://#{LOOPBACK_HOST}:#{port}/mcp"}}}
           #{Log::PREFIX} change a setting: SkRubyMcp::Settings.set('port', 7891); then restart the server
+          #{Log::PREFIX} verbose logging: SkRubyMcp::Log.level = :debug
         TEXT
       end
 

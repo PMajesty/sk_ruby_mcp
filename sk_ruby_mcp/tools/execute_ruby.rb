@@ -37,6 +37,9 @@ module SkRubyMcp
         - Bulk geometry: entities.build { |builder| ... } (SketchUp 2022+) or Geom::PolygonMesh with
           entities.fill_from_mesh; create geometry inside a new group to avoid merging with existing edges and faces.
         - Do not call view.refresh in loops; the server calls view.invalidate once after a wrapped call.
+        - macOS before SketchUp 2025: while SketchUp is not the active application, UI-level actions do nothing
+          (Sketchup.send_action such as editUndo:, a newly opened or created document becoming active, dialogs).
+          Model edits work regardless. Ask the user to click into SketchUp when such an action is required.
       TEXT
 
       INPUT_SCHEMA = {

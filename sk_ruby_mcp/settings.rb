@@ -8,7 +8,7 @@ module SkRubyMcp
     DEFAULTS = {
       'port' => 7891,
       'auto_start' => true,
-      'pump_interval' => 0.05,
+      'pump_interval' => 0.02,
       'auth_token' => '',
       'wrap_in_operation' => true,
       'execution_timeout_s' => 50.0
