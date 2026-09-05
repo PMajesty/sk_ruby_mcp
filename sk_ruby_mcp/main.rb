@@ -9,7 +9,8 @@
   runtime/output_capture runtime/ensure_active_model runtime/model_snapshot
   runtime/sketchup_document_bridge runtime/skp_header runtime/path_identity runtime/deferred
   runtime/document_pending runtime/save_policy runtime/document_session runtime/tool_call_gate runtime/ruby_executor
-  tools/tool_support tools/execute_ruby tools/session_tools
+  runtime/viewport_capture
+  tools/tool_support tools/execute_ruby tools/session_tools tools/model_look
   protocol/json_rpc protocol/mcp_handler
   transport/http_connection transport/router transport/loopback_guard transport/mcp_endpoint transport/http_server
 ].each { |relative_path| Sketchup.require(File.join(__dir__, relative_path)) }
@@ -24,7 +25,7 @@ module SkRubyMcp
   module App
     INSTRUCTIONS = <<~TEXT.strip
       SketchUp MCP on this computer. One focused document at a time.
-      model_status: what is focused plus a model summary; call first and after any state opening (wait_s=15). model_open: open or switch to an existing .skp. model_new: blank document. model_save: mode in_place, save_as or copy. model_close: close. model_revert: discard unsaved changes and reload the last save, with no confirmation. execute_ruby: all modelling.
+      model_status: what is focused plus a model summary; call first and after any state opening (wait_s=15). model_look: a JPEG of the viewport when you need to see the model; do not poll it. model_open: open or switch to an existing .skp. model_new: blank document. model_save: mode in_place, save_as or copy. model_close: close. model_revert: discard unsaved changes and reload the last save, with no confirmation. execute_ruby: all modelling.
       Unsaved changes on open, new or close need if_unsaved=save (files this session opened or saved) or if_unsaved=discard. Nothing is saved or discarded by default.
       Replies are JSON: path is the real path on disk (null for Untitled); state is active, no_document, opening or failed; a failure has message, next (what to call), retry and instead. temporary true means call model_save with mode save_as and a path before treating the file as finished.
       No reply or connection refused means SketchUp is closed or the server is stopped: ask the architect to start SketchUp, then call model_status. Do not assume the last file is still focused.
@@ -99,7 +100,7 @@ module SkRubyMcp
         )
         @document_session = session
         drop_parked = nil
-        handler = build_handler(gate, session, executor)
+        handler = build_handler(gate, session, executor, attach)
         handler.on_cancel = ->(request_id) { drop_parked && drop_parked.call(request_id) }
         router = Transport::Router.new
                                   .add('POST', '/mcp', Transport::McpEndpoint.new(handler: handler))
@@ -122,7 +123,7 @@ module SkRubyMcp
         server
       end
 
-      def build_handler(call_gate, session, executor)
+      def build_handler(call_gate, session, executor, attach)
         tools = [
           Tools::ModelStatus.new(session: session),
           Tools::ModelOpen.new(session: session),
@@ -134,6 +135,10 @@ module SkRubyMcp
             executor: executor,
             session: session,
             wrap_in_operation_by_default: Settings.get('wrap_in_operation')
+          ),
+          Tools::ModelLook.new(
+            session: session,
+            capturer: Runtime::ViewportCapture.new(model_provider: -> { attach.current_model })
           )
         ]
         Protocol::McpHandler.new(

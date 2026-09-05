@@ -116,6 +116,7 @@ class McpHandlerTest < Minitest::Test
     text = response[:result][:contents].first[:text]
     assert_includes text, 'if_unsaved'
     assert_includes text, '45.degrees'
+    assert_includes text, 'model_look'
     unknown = handle('resources/read', { 'uri' => 'skmcp://missing' })
     assert_equal SkRubyMcp::Protocol::JsonRpc::INVALID_PARAMS, unknown[:error][:code]
     assert_equal 1, unknown[:id]

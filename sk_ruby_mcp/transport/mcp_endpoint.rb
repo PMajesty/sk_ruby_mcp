@@ -56,9 +56,9 @@ module SkRubyMcp
           Tools::ToolReply.call(
             ok: false,
             error: 'response_too_large',
-            message: 'The reply was too large. Ask for less data or a smaller execute_ruby return value.',
+            message: 'The reply was too large. Ask for less data, a smaller execute_ruby return value, or model_look with a smaller width.',
             retry: true,
-            instead: 'execute_ruby'
+            instead: 'model_status'
           )
         )
       end

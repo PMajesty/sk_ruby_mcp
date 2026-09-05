@@ -33,10 +33,12 @@ module SkRubyMcp
 
       module_function
 
-      def call(payload)
+      def call(payload, extra_content = nil)
         compact = compact_hash(payload)
+        content = [{ type: 'text', text: JSON.pretty_generate(compact) }]
+        Array(extra_content).each { |item| content << item }
         {
-          content: [{ type: 'text', text: JSON.pretty_generate(compact) }],
+          content: content,
           structuredContent: compact,
           isError: compact['ok'] == false
         }
@@ -104,6 +106,28 @@ module SkRubyMcp
         next: { type: 'string' },
         ruby: { type: 'object' },
         timed_out: { type: 'object' }
+      },
+      required: ['ok']
+    }.freeze
+
+    LOOK_OUTPUT_SCHEMA = {
+      type: 'object',
+      properties: {
+        ok: { type: 'boolean' },
+        state: { type: 'string', enum: %w[active no_document opening failed] },
+        path: { type: %w[string null] },
+        title: { type: 'string' },
+        view: { type: 'string', enum: %w[current iso plan front right] },
+        width: { type: 'integer' },
+        height: { type: 'integer' },
+        mime: { type: 'string' },
+        bytes: { type: 'integer' },
+        camera: { type: 'object' },
+        error: { type: 'string' },
+        message: { type: 'string' },
+        retry: { type: 'boolean' },
+        instead: { type: 'string' },
+        next: { type: 'string' }
       },
       required: ['ok']
     }.freeze

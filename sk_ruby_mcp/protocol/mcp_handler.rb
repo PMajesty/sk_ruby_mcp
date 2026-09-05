@@ -116,6 +116,7 @@ module SkRubyMcp
         - model_save uses mode in_place, save_as or copy
         - model_close closes; model_revert discards unsaved changes and reloads the last save, with no confirmation
         - execute_ruby does all modelling
+        - model_look photographs the viewport when you need to see the model; do not poll it
 
         Unsaved changes on open, new or close need if_unsaved=save or if_unsaved=discard. Nothing is saved or discarded by default. save works only for a file this session opened or saved. A failure reply names next (what to call). temporary true means model_save with mode save_as and a path.
 

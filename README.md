@@ -1,6 +1,6 @@
 # SK Ruby MCP
 
-An MCP server that runs inside desktop SketchUp as a Ruby extension. Any MCP client that speaks HTTP connects to `http://127.0.0.1:7891/mcp` and gets seven tools: six that open, create, save, close, switch and revert documents, and `execute_ruby` for all modelling.
+An MCP server that runs inside desktop SketchUp as a Ruby extension. Any MCP client that speaks HTTP connects to `http://127.0.0.1:7891/mcp` and gets eight tools: six that open, create, save, close, switch and revert documents, `execute_ruby` for all modelling, and `model_look` when the model needs to see the viewport.
 
 No second process, no UI inside SketchUp, no gems. Ruby stdlib only.
 
@@ -59,6 +59,7 @@ Anything that speaks MCP over Streamable HTTP works the same way, including Code
 | Tool | Arguments | Does |
 |---|---|---|
 | `model_status` | `wait_s` 0..15 | What is focused plus a cheap model summary: face count, bounds in metres, display units, tags, materials, selection, up to 20 top-level groups and components with names and bounds. Call first, and after any `opening` reply. |
+| `model_look` | `view`, `width`, `height` | A JPEG of the focused viewport, returned as MCP image content. Optional `view`: `current` (default), `iso`, `plan`, `front`, `right`. Named views frame the model and restore the architect's camera. Do not poll this; `model_status` is the cheap picture. |
 | `model_open` | `path`, `if_unsaved` | Open an existing `.skp`. Also the switch: the focused document is closed first. |
 | `model_new` | `if_unsaved` | Blank document. |
 | `model_save` | `mode` `in_place` / `save_as` / `copy`, `path`, `version` | `in_place` only for a file this session opened or saved. `save_as` moves the model to `path`. `copy` writes `path` and keeps focus; `version` (a year such as `2017`) writes the copy for an older SketchUp. |
@@ -74,6 +75,7 @@ Reply conventions, the same for every tool:
 - Nothing is saved or discarded without `if_unsaved`. A dirty document fails with `unsaved_changes` until the caller passes `if_unsaved=save` (allowed only for files this session opened or saved) or `if_unsaved=discard`.
 - Open, new and revert wait up to 15 s inside the call. If SketchUp is still loading, they return `state: opening`; poll `model_status` with `wait_s=15` until `active` or `failed`.
 - One tool call at a time. A concurrent call gets `error: busy` with `retry: true`. `model_status` is exempt so a client can always ask what is going on.
+- `model_look` adds a second `content` item `{ type: "image", mimeType: "image/jpeg", data: "<base64>" }`. The JSON twin does not include the pixels. Default size is 1280×720; the server shrinks the JPEG if it would blow the 1 MiB reply cap.
 
 The server also publishes a short `skmcp://howto` resource and an `instructions` string in `initialize`, so a model that has read nothing but `tools/list` can do real work.
 
@@ -122,7 +124,7 @@ SkRubyMcp::App.stop; SkRubyMcp::App.start
 
 ## Limitations
 
-- No viewport image yet. `model_status` is the model's only picture.
+- `model_look` photographs the live viewport. A hidden or zero-size window can yield a blank or tiny image; named views (`iso`, `plan`, `front`, `right`) still frame the model. The shot is JPEG, not a photoreal render.
 - Editing by hand while a tool call is in flight is not supported. Edit when the agent is idle.
 
 ## Development
@@ -135,7 +137,7 @@ ruby -Itest -e 'Dir["test/*_test.rb"].sort.each { |f| require "./#{f}" }'
 ruby -Itest test/protocol_test.rb
 ```
 
-243 tests, green on Ruby 2.7.8 and 3.3.0. Lint with `rubocop` (Lint cops only, target Ruby 2.7).
+284 tests, green on Ruby 2.7.8, 3.2.2 and 3.3.0. Lint with `rubocop` (Lint cops only, target Ruby 2.7).
 
 Live checks need SketchUp running with the extension loaded. They write only under `~/sk-mcp-scratch/`.
 
@@ -143,6 +145,7 @@ Live checks need SketchUp running with the extension loaded. They write only und
 |---|---|
 | `bin/sk-mcp-ensure` | Python 3. Starts SketchUp if `/health` does not answer and waits up to 60 s. Env: `SK_RUBY_MCP_PORT`, `SK_RUBY_MCP_WAIT_S`, `SKETCHUP_YEAR`. |
 | `ruby eval/protocol_smoke.rb` | Handshake, `tools/list`, `model_status`, `/health`, 405 and Origin checks. |
+| `ruby eval/save_look.rb [view] [out.jpg]` | Live `model_look`: JSON on stdout, JPEG on disk. |
 | `ruby eval/soak.rb` | Twenty document operations in a row: new, draw, save_as, switch, copy, close, revert, discard. Fails on any new SketchUp crash report. |
 | `ruby eval/blind_tester.rb --provider openai\|anthropic --base-url URL --model NAME` | Runs the three architect jobs in `eval/jobs/` through an LLM that sees only `tools/list`. API key from `$OPENAI_API_KEY` or the variable named by `SK_MCP_LLM_KEY_ENV`. Transcripts go to `eval/runs/`. |
 
@@ -157,8 +160,8 @@ sk_ruby_mcp/
   settings.rb           read_default / write_default
   protocol/             JSON-RPC parsing, MCP methods, howto resource
   transport/            HTTP server and pump, router, loopback guard, /mcp endpoint
-  runtime/              document session, save policy, skp header, path identity, Ruby executor
-  tools/                the seven tool definitions
+  runtime/              document session, save policy, skp header, path identity, Ruby executor, viewport capture
+  tools/                the eight tool definitions
   assets/blank.skp      fallback blank for model_new
 test/                   minitest, no SketchUp required
 eval/                   live checks against a running SketchUp
@@ -167,6 +170,6 @@ bin/                    sk-mcp-test, sk-mcp-ensure
 
 ## Roadmap and non-goals
 
-Later: named architect tools (wall, slab, window) as modules on the same server, a viewport image so the model can check its own work, Windows verification. `execute_ruby` stays as the escape hatch.
+Later: named architect tools (wall, slab, window) as modules on the same server, Windows verification. `execute_ruby` stays as the escape hatch.
 
 Never: menus, toolbars or dialogs inside SketchUp; a second process to keep alive; SketchUp Web or iPad.

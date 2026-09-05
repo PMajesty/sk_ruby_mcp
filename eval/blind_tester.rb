@@ -102,10 +102,9 @@ module BlindTester
       results = []
       reply[:tool_calls].each do |call|
         result = @client.call(call[:name], call[:arguments] || {})
-        text = result.dig('content', 0, 'text').to_s
         results << { id: call[:id], name: call[:name], arguments: call[:arguments], result: result }
-        messages << { role: 'tool', tool_call_id: call[:id], content: text }
       end
+      append_tool_results(messages, @llm, results)
       transcript << { role: 'tool', tool_results: results }
     end
     path = File.join(@out_dir, "#{job}-#{safe(@model_name)}.jsonl")
@@ -113,6 +112,23 @@ module BlindTester
     score = score_job(job, transcript)
     puts "SCORE #{job} #{score.inspect}"
     capable_pass?(score)
+  end
+
+  def append_tool_results(messages, llm, results)
+    looked = []
+    results.each do |item|
+      text = item[:result].dig('content', 0, 'text').to_s
+      images = look_images(item[:result])
+      messages << llm.tool_result_message(item[:id], text, images)
+      looked.concat(images)
+    end
+    llm.vision_after_tools(looked).each { |message| messages << message }
+  end
+
+  def look_images(result)
+    Array(result['content']).select { |item| item['type'] == 'image' }.map do |item|
+      { 'mime' => item['mimeType'], 'data' => item['data'] }
+    end
   end
 
   def assistant_message(reply)

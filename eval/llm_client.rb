@@ -28,6 +28,20 @@ module SkMcpEval
       }
     end
 
+    def tool_result_message(id, text, _images)
+      { role: 'tool', tool_call_id: id, content: text }
+    end
+
+    def vision_after_tools(images)
+      return [] if images.nil? || images.empty?
+
+      vision = [{ type: 'text', text: 'Viewport from model_look.' }]
+      images.each do |image|
+        vision << { type: 'image_url', image_url: { url: "data:#{image['mime']};base64,#{image['data']}" } }
+      end
+      [{ role: 'user', content: vision }]
+    end
+
     private
 
     def openai_tool_call(item)
@@ -75,6 +89,14 @@ module SkMcpEval
       { text: text, tool_calls: calls }
     end
 
+    def tool_result_message(id, text, images)
+      { role: 'tool', tool_call_id: id, content: text, images: images }
+    end
+
+    def vision_after_tools(_images)
+      []
+    end
+
     private
 
     def anthropic_message(item)
@@ -85,7 +107,7 @@ module SkMcpEval
           'content' => [{
             'type' => 'tool_result',
             'tool_use_id' => item[:tool_call_id] || item['tool_call_id'],
-            'content' => item[:content] || item['content']
+            'content' => anthropic_tool_content(item)
           }]
         }
       elsif role == 'assistant' && item[:tool_calls]
@@ -99,6 +121,26 @@ module SkMcpEval
       else
         { 'role' => role, 'content' => item[:content] || item['content'] }
       end
+    end
+
+    def anthropic_tool_content(item)
+      text = item[:content] || item['content']
+      images = item[:images] || item['images'] || []
+      return text if images.empty?
+
+      blocks = []
+      blocks << { 'type' => 'text', 'text' => text } unless text.to_s.empty?
+      images.each do |image|
+        blocks << {
+          'type' => 'image',
+          'source' => {
+            'type' => 'base64',
+            'media_type' => image['mime'],
+            'data' => image[:data] || image['data']
+          }
+        }
+      end
+      blocks
     end
 
     def post(url, payload)

@@ -12,7 +12,8 @@ SOURCE_ROOT = File.expand_path('../sk_ruby_mcp', __dir__)
   runtime/output_capture runtime/ensure_active_model runtime/model_snapshot runtime/skp_header
   runtime/sketchup_document_bridge runtime/path_identity runtime/deferred
   runtime/document_pending runtime/save_policy runtime/document_session runtime/tool_call_gate runtime/ruby_executor
-  tools/tool_support tools/execute_ruby tools/session_tools
+  runtime/viewport_capture
+  tools/tool_support tools/execute_ruby tools/session_tools tools/model_look
   protocol/json_rpc protocol/mcp_handler
   transport/http_connection transport/router transport/loopback_guard transport/mcp_endpoint transport/http_server
 ].each { |relative_path| require File.join(SOURCE_ROOT, relative_path) }
