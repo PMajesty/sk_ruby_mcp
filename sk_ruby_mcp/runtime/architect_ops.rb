@@ -78,8 +78,10 @@ module SkRubyMcp
         gfa = 0.0
         rows = top.map do |row|
           size = row['size_m'] || [0.0, 0.0, 0.0]
-          footprint = MathN.footprint_m2(size)
           height = size[2].to_f
+          next if height < 1.0
+
+          footprint = MathN.footprint_m2(size)
           floors = MathN.storeys_guess(height, storey)
           piece_gfa = footprint * floors
           groups_footprint += footprint
@@ -91,7 +93,7 @@ module SkRubyMcp
             'storeys_guess' => floors,
             'gfa_m2' => round4(piece_gfa)
           }
-        end
+        end.compact
         outer = outer_footprint_m2
         site_area = site_area_from(site_w_m, site_d_m, site_area_m2)
         {
@@ -161,14 +163,14 @@ module SkRubyMcp
         placed = 0
         skipped = 0
         @last_punch_error = nil
+        face = face_hit[0]
         layout['slots'].each do |slot|
-          live = largest_facing_face(group, world_tr, direction)
-          if live.nil?
-            skipped += 1
+          unless alive?(face)
             @last_punch_error ||= 'face vanished'
+            skipped += 1
             next
           end
-          if punch_slot(live[0], slot)
+          if punch_slot(face, slot)
             placed += 1
           else
             skipped += 1
@@ -562,11 +564,26 @@ module SkRubyMcp
       def each_entity(entities, &block)
         return if entities.nil?
 
-        if entities.respond_to?(:each)
-          entities.each(&block)
-        elsif entities.respond_to?(:items)
-          entities.items.each(&block)
+        list = if entities.respond_to?(:to_a)
+                 entities.to_a
+               elsif entities.respond_to?(:items)
+                 entities.items.dup
+               else
+                 []
+               end
+        list.each do |ent|
+          next unless alive?(ent)
+
+          block.call(ent)
         end
+      end
+
+      def alive?(ent)
+        return false if ent.nil?
+        return false if ent.respond_to?(:deleted?) && ent.deleted?
+        return false if ent.respond_to?(:valid?) && !ent.valid?
+
+        true
       end
 
       def count_direct_faces(entities)
