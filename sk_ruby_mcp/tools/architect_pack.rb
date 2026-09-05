@@ -481,12 +481,12 @@ module SkRubyMcp
         TITLE = 'Punch a façade grid'
         DESCRIPTION = <<~TEXT.strip
           Punch a regular grid of rectangular holes in the largest vertical façade of a named group that faces north, south, east or west (SketchUp: Y north, X east, Z up). Holes are inner loops on the wall face, not cutting-components. Use this for windows. sill_m is the height of the first row from the bottom of the face; leftover height is split between rows and above the last row, not below the first. execute_ruby if you need irregular openings or several façades.
-          Arguments: group_name (required). facing (required: north/south/east/west). cols, rows (required integers). width_m, height_m (required metres). sill_m (optional, default 0.9, from the bottom of the face). margin_m (optional, default 0.4). The reply includes first_sill_m and last_head_m.
+          Arguments: group_name (required; group name or nested path such as South wing/Этаж 02). facing (required: north/south/east/west). cols, rows (required integers). width_m, height_m (required metres). sill_m (optional, default 0.9, from the bottom of the face). margin_m (optional, default 0.4). The reply includes first_sill_m and last_head_m.
         TEXT
         INPUT_SCHEMA = {
           type: 'object',
           properties: {
-            group_name: { type: 'string', description: 'Name of the group whose façade to punch.' },
+            group_name: { type: 'string', description: 'Group name or nested path (South wing/Этаж 02).' },
             facing: {
               type: 'string',
               enum: %w[north south east west n s e w],

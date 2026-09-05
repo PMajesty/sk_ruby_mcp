@@ -381,26 +381,37 @@ module SkRubyMcp
       def find_named_group(entities, name, tr)
         wanted = name.to_s
         wanted_down = wanted.downcase
+        wanted_last = wanted_down.split('/').last
         exact = nil
+        path_exact = nil
         ci_match = nil
         sub = nil
-        search_named(entities, tr) do |group, world_tr|
+        search_named(entities, tr, '') do |group, world_tr, node_path|
           current = group.respond_to?(:name) ? group.name.to_s : ''
+          path_down = node_path.to_s.downcase
           exact ||= [group, world_tr] if current == wanted
+          path_exact ||= [group, world_tr] if path_down == wanted_down || path_down.end_with?("/#{wanted_down}")
           ci_match ||= [group, world_tr] if exact.nil? && current.downcase == wanted_down
+          ci_match ||= [group, world_tr] if exact.nil? && current.downcase == wanted_last && wanted_down.include?('/')
           sub ||= [group, world_tr] if exact.nil? && !current.empty? && current.downcase.include?(wanted_down)
         end
-        exact || ci_match || sub
+        exact || path_exact || ci_match || sub
       end
 
-      def search_named(entities, tr, &block)
+      def search_named(entities, tr, path, &block)
         each_entity(entities) do |ent|
           kind = classify(ent)
           next if kind.nil?
 
           child_tr = multiply_tr(tr, read_transformation(ent))
-          block.call(ent, child_tr) if kind == 'group'
-          search_named(child_entities(ent, kind), child_tr, &block)
+          name = ent.respond_to?(:name) ? ent.name.to_s : ''
+          node_path = if path.empty?
+                        name.empty? ? '(unnamed)' : name
+                      else
+                        "#{path}/#{name.empty? ? '(unnamed)' : name}"
+                      end
+          block.call(ent, child_tr, node_path) if kind == 'group'
+          search_named(child_entities(ent, kind), child_tr, node_path, &block)
         end
       end
 
