@@ -78,6 +78,7 @@ module SkRubyMcp
         top = listed['groups'].select { |row| row['depth'].to_i.zero? }
         groups_footprint = 0.0
         gfa = 0.0
+        rects = []
         rows = top.map do |row|
           size = row['size_m'] || [0.0, 0.0, 0.0]
           height = size[2].to_f
@@ -88,6 +89,12 @@ module SkRubyMcp
           piece_gfa = footprint * floors
           groups_footprint += footprint
           gfa += piece_gfa
+          box = row['bounds_m'] || {}
+          min_pt = box['min']
+          max_pt = box['max']
+          if min_pt.is_a?(Array) && max_pt.is_a?(Array) && min_pt.size >= 2 && max_pt.size >= 2
+            rects << [min_pt[0].to_f, min_pt[1].to_f, max_pt[0].to_f, max_pt[1].to_f]
+          end
           {
             'name' => row['name'],
             'footprint_m2' => round4(footprint),
@@ -96,6 +103,7 @@ module SkRubyMcp
             'gfa_m2' => round4(piece_gfa)
           }
         end.compact
+        union_fp = MathN.union_rects_m2(rects)
         outer = outer_footprint_m2
         site_area = site_area_from(site_w_m, site_d_m, site_area_m2)
         payload = {
@@ -106,17 +114,19 @@ module SkRubyMcp
           'site_d_m' => site_d_m,
           'site_area_m2' => site_area && round4(site_area),
           'groups_footprint_m2' => round4(groups_footprint),
+          'groups_union_m2' => round4(union_fp),
           'outer_footprint_m2' => outer && round4(outer),
           'coverage_groups' => coverage(groups_footprint, site_area),
+          'coverage_union' => coverage(union_fp, site_area),
           'coverage_outer' => coverage(outer, site_area),
           'gfa_m2' => round4(gfa),
           'groups' => rows,
           'path' => model_path
         }
-        if !outer.nil? && groups_footprint > (outer * 1.02)
+        if groups_footprint > (union_fp * 1.02) && union_fp.positive?
           payload['overlap_warning'] = true
           payload['message'] =
-            'groups_footprint_m2 sums axis-aligned boxes and can exceed the outer rectangle when masses overlap at corners. For a courtyard ring the building footprint is site minus courtyard, not four full-length boxes.'
+            'groups_footprint_m2 sums axis-aligned boxes and double-counts overlaps. groups_union_m2 is the XY union of those boxes. For a courtyard ring use place_perimeter footprint_m2 (site minus courtyard).'
         end
         payload
       end

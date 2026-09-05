@@ -53,8 +53,10 @@ module SkRubyMcp
           site_area_m2: { type: 'number' },
           storey_h_m: { type: 'number' },
           groups_footprint_m2: { type: 'number' },
+          groups_union_m2: { type: 'number' },
           outer_footprint_m2: { type: 'number' },
           coverage_groups: { type: 'number' },
+          coverage_union: { type: 'number' },
           coverage_outer: { type: 'number' },
           gfa_m2: { type: 'number' },
           group: { type: 'string' },
@@ -458,7 +460,7 @@ module SkRubyMcp
         NAME = 'site_metrics'
         TITLE = 'Site coverage and GFA'
         DESCRIPTION = <<~TEXT.strip
-          Report footprint, coverage against a given site, and a crude GFA (top-level group XY × guessed storeys). groups_footprint_m2 sums top-level axis-aligned XY boxes and can double-count overlapping corners. Groups shorter than min_height_m (default 1.0 m) are skipped so site plates and lawns do not inflate coverage. outer_footprint_m2 is the model bounding rectangle. Pass site_w_m and site_d_m or site_area_m2. Does not change the model.
+          Report footprint, coverage against a given site, and a crude GFA (top-level group XY × guessed storeys). groups_footprint_m2 sums top-level axis-aligned XY boxes and can double-count overlapping corners. groups_union_m2 is the XY union of those boxes (correct for an L or U of overlapping bars). Groups shorter than min_height_m (default 1.0 m) are skipped so site plates and lawns do not inflate coverage. outer_footprint_m2 is the model bounding rectangle. Pass site_w_m and site_d_m or site_area_m2. Does not change the model.
           Arguments: site_w_m, site_d_m (optional metres). site_area_m2 (optional). storey_h_m (optional, default 3.3). min_height_m (optional, default 1.0).
         TEXT
         INPUT_SCHEMA = {

@@ -89,6 +89,20 @@ class ArchitectMathTest < Minitest::Test
     assert_equal [54.0, 16.0, 0.0], east['origin_m']
   end
 
+  def test_union_rects_l_shape_does_not_double_count
+    south = [0.0, 0.0, 80.0, 18.0]
+    west = [0.0, 0.0, 18.0, 40.0]
+    union = MathN.union_rects_m2([south, west])
+    assert_in_delta 1836.0, union, 1.0e-6
+    assert_in_delta 2160.0, MathN.footprint_m2([80, 18]) + MathN.footprint_m2([18, 40]), 1.0e-6
+  end
+
+  def test_union_rects_disjoint
+    a = [0.0, 0.0, 10.0, 10.0]
+    b = [20.0, 0.0, 30.0, 10.0]
+    assert_in_delta 200.0, MathN.union_rects_m2([a, b]), 1.0e-9
+  end
+
   def test_perimeter_plan_rejects_solid_fill
     plan = MathN.perimeter_plan(site_w: 20, site_d: 20, depth: 10, origin: nil)
     refute plan['ok']

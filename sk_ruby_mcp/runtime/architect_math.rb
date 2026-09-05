@@ -30,6 +30,45 @@ module SkRubyMcp
         size_m[0].to_f * size_m[1].to_f
       end
 
+      def rect_area_m2(rect)
+        width = rect[2].to_f - rect[0].to_f
+        depth = rect[3].to_f - rect[1].to_f
+        return 0.0 if width <= 0.0 || depth <= 0.0
+
+        width * depth
+      end
+
+      def intersect_rect(a, b)
+        [
+          [a[0].to_f, b[0].to_f].max,
+          [a[1].to_f, b[1].to_f].max,
+          [a[2].to_f, b[2].to_f].min,
+          [a[3].to_f, b[3].to_f].min
+        ]
+      end
+
+      # Площадь объединения осевых прямоугольников [xmin, ymin, xmax, ymax] в м².
+      def union_rects_m2(rects)
+        list = Array(rects).select { |rect| rect.is_a?(Array) && rect.size >= 4 }
+        return 0.0 if list.empty?
+        return rect_area_m2(list[0]) if list.length == 1
+        return rect_area_m2(list[0]) + rect_area_m2(list[1]) - rect_area_m2(intersect_rect(list[0], list[1])) if list.length == 2
+
+        n = list.length
+        n = 12 if n > 12
+        list = list.first(n)
+        total = 0.0
+        1.upto(n) do |k|
+          sign = k.odd? ? 1.0 : -1.0
+          list.combination(k) do |subset|
+            acc = subset[0]
+            subset[1..-1].each { |rect| acc = intersect_rect(acc, rect) }
+            total += sign * rect_area_m2(acc)
+          end
+        end
+        total
+      end
+
       def storeys_guess(height_m, storey_h_m)
         h = height_m.to_f
         storey = storey_h_m.to_f
