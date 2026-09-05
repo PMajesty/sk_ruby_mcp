@@ -1,6 +1,6 @@
 # SK Ruby MCP
 
-An MCP server that runs inside desktop SketchUp as a Ruby extension. Any MCP client that speaks HTTP connects to `http://127.0.0.1:7891/mcp` and gets eight tools: six that open, create, save, close, switch and revert documents, `execute_ruby` for all modelling, and `model_look` when the model needs to see the viewport. An optional architect pack (`place_box`, `list_groups`, `site_metrics`, `grid_openings`) stays off unless a flag file is present; without that file the surface is still eight tools.
+An MCP server that runs inside desktop SketchUp as a Ruby extension. Any MCP client that speaks HTTP connects to `http://127.0.0.1:7891/mcp` and gets eight tools: six that open, create, save, close, switch and revert documents, `execute_ruby` for all modelling, and `model_look` when the model needs to see the viewport. An optional architect pack (`place_box`, `place_perimeter`, `list_groups`, `site_metrics`, `grid_openings`) stays off unless a flag file is present; without that file the surface is still eight tools.
 
 No second process, no UI inside SketchUp, no gems. Ruby stdlib only.
 
@@ -72,6 +72,7 @@ Optional architect pack, off by default. Create `architect_pack.on` in the exten
 | Tool | Arguments | Does |
 |---|---|---|
 | `place_box` | `size_m`, `origin_m`, `name`, `storeys`, `tag`, `color` | Axis-aligned box in metres as a named group. Optional stacked floor groups. |
+| `place_perimeter` | `site_w_m`, `site_d_m`, `depth_m`, `height_m`, `origin_m`, `storeys`, `name_*` | Four courtyard wings with no doubled corners. Reply includes union footprint and coverage. |
 | `list_groups` | `max_depth`, `max_items` | Nested groups with bounds in metres. Deeper than `model_status`. |
 | `site_metrics` | `site_w_m`, `site_d_m`, `site_area_m2`, `storey_h_m`, `min_height_m` | Footprint, coverage, crude GFA. Groups shorter than `min_height_m` (default 1 m) are skipped. |
 | `grid_openings` | `group_name`, `facing`, `cols`, `rows`, `width_m`, `height_m`, `sill_m`, `margin_m` | Punch a regular window grid on a named façade. `sill_m` is the first-row height; leftover height is not pushed under the first row. |

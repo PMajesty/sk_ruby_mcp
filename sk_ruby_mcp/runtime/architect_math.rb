@@ -113,6 +113,59 @@ module SkRubyMcp
         [u0, v0, u0 + m_to_in(slot['w']), v0 + m_to_in(slot['h'])]
       end
 
+      def perimeter_plan(site_w:, site_d:, depth:, origin:)
+        width = site_w.to_f
+        depth_y = site_d.to_f
+        thick = depth.to_f
+        origin = origin.nil? ? [0.0, 0.0, 0.0] : origin
+        ox = origin[0].to_f
+        oy = origin[1].to_f
+        oz = origin[2].to_f
+        if width <= 0.0 || depth_y <= 0.0 || thick <= 0.0
+          return failure('site_w_m, site_d_m and depth_m must be positive')
+        end
+        if width <= (2.0 * thick) || depth_y <= (2.0 * thick)
+          return failure(
+            "depth_m #{thick} leaves no courtyard in a #{width}×#{depth_y} m site " \
+            '(need site > 2×depth on both axes)'
+          )
+        end
+
+        inner_w = width - (2.0 * thick)
+        inner_d = depth_y - (2.0 * thick)
+        wings = [
+          {
+            'facing' => 'south',
+            'origin_m' => [ox, oy, oz],
+            'size_xy_m' => [width, thick]
+          },
+          {
+            'facing' => 'north',
+            'origin_m' => [ox, oy + depth_y - thick, oz],
+            'size_xy_m' => [width, thick]
+          },
+          {
+            'facing' => 'west',
+            'origin_m' => [ox, oy + thick, oz],
+            'size_xy_m' => [thick, inner_d]
+          },
+          {
+            'facing' => 'east',
+            'origin_m' => [ox + width - thick, oy + thick, oz],
+            'size_xy_m' => [thick, inner_d]
+          }
+        ]
+        footprint = (2.0 * width * thick) + (2.0 * thick * inner_d)
+        {
+          'ok' => true,
+          'wings' => wings,
+          'courtyard_m' => [inner_w, inner_d],
+          'courtyard_m2' => inner_w * inner_d,
+          'footprint_m2' => footprint,
+          'site_m2' => width * depth_y
+        }
+      end
+
       def failure(message)
         { 'ok' => false, 'error' => 'does_not_fit', 'message' => message, 'slots' => [] }
       end

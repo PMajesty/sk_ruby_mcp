@@ -368,6 +368,25 @@ class ArchitectPackTest < Minitest::Test
     assert_in_delta 800.0, body['groups_footprint_m2'], 1.0
   end
 
+  def test_place_perimeter_reports_union_footprint
+    result = Pack::PlacePerimeter.new(session: @session, attach: @attach).call(
+      'site_w_m' => 70,
+      'site_d_m' => 50,
+      'depth_m' => 16,
+      'height_m' => 18,
+      'storeys' => 5
+    )
+    refute result[:isError], parsed(result).inspect
+    body = parsed(result)
+    assert_equal true, body['ok']
+    assert_equal 4, body['count']
+    assert_in_delta 2816.0, body['footprint_m2'], 1.0
+    assert_in_delta 0.8046, body['coverage'], 0.001
+    names = body['wings'].map { |row| row['name'] }
+    assert_includes names, 'South wing'
+    assert_includes names, 'West wing'
+  end
+
   def test_grid_openings_missing_group
     result = Pack::GridOpenings.new(session: @session, attach: @attach).call(
       'group_name' => 'Missing',
@@ -381,9 +400,9 @@ class ArchitectPackTest < Minitest::Test
     assert_equal 'group_not_found', parsed(result)['error']
   end
 
-  def test_instances_lists_four_tools
+  def test_instances_lists_five_tools
     names = Pack.instances(session: @session, attach: @attach).map(&:name)
-    assert_equal %w[place_box list_groups site_metrics grid_openings], names
+    assert_equal %w[place_box place_perimeter list_groups site_metrics grid_openings], names
   end
 
   def test_list_groups_is_read_only

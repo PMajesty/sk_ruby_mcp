@@ -73,4 +73,24 @@ class ArchitectMathTest < Minitest::Test
     assert_in_delta MathN.m_to_in(-22.1), u1, 0.01
     assert_in_delta MathN.m_to_in(3.3), v0, 0.01
   end
+
+  def test_perimeter_plan_does_not_double_corners
+    plan = MathN.perimeter_plan(site_w: 70, site_d: 50, depth: 16, origin: [0, 0, 0])
+    assert plan['ok'], plan['message']
+    assert_equal 4, plan['wings'].length
+    assert_in_delta 38.0, plan['courtyard_m'][0], 1.0e-9
+    assert_in_delta 18.0, plan['courtyard_m'][1], 1.0e-9
+    assert_in_delta 2816.0, plan['footprint_m2'], 1.0e-6
+    assert_in_delta 3500.0, plan['site_m2'], 1.0e-6
+    west = plan['wings'].find { |w| w['facing'] == 'west' }
+    east = plan['wings'].find { |w| w['facing'] == 'east' }
+    assert_equal [0.0, 16.0, 0.0], west['origin_m']
+    assert_equal [16.0, 18.0], west['size_xy_m']
+    assert_equal [54.0, 16.0, 0.0], east['origin_m']
+  end
+
+  def test_perimeter_plan_rejects_solid_fill
+    plan = MathN.perimeter_plan(site_w: 20, site_d: 20, depth: 10, origin: nil)
+    refute plan['ok']
+  end
 end

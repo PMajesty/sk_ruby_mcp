@@ -98,7 +98,7 @@ module SkRubyMcp
         end.compact
         outer = outer_footprint_m2
         site_area = site_area_from(site_w_m, site_d_m, site_area_m2)
-        {
+        payload = {
           'ok' => true,
           'storey_h_m' => storey,
           'min_height_m' => round4(min_h),
@@ -111,6 +111,66 @@ module SkRubyMcp
           'coverage_outer' => coverage(outer, site_area),
           'gfa_m2' => round4(gfa),
           'groups' => rows,
+          'path' => model_path
+        }
+        if !outer.nil? && groups_footprint > (outer * 1.02)
+          payload['overlap_warning'] = true
+          payload['message'] =
+            'groups_footprint_m2 sums axis-aligned boxes and can exceed the outer rectangle when masses overlap at corners. For a courtyard ring the building footprint is site minus courtyard, not four full-length boxes.'
+        end
+        payload
+      end
+
+      def place_perimeter(origin_m:, site_w_m:, site_d_m:, depth_m:, height_m:, names:, tag:, color:, storeys:)
+        plan = MathN.perimeter_plan(site_w: site_w_m, site_d: site_d_m, depth: depth_m, origin: origin_m)
+        unless plan['ok']
+          return {
+            'ok' => false,
+            'error' => plan['error'],
+            'message' => plan['message'],
+            'retry' => false
+          }
+        end
+
+        floors = storeys.nil? ? 1 : storeys.to_i
+        floors = 1 if floors < 1
+        created = []
+        plan['wings'].each do |wing|
+          facing = wing['facing']
+          name = names[facing] || default_wing_name(facing)
+          xy = wing['size_xy_m']
+          origin = wing['origin_m']
+          box = place_box(
+            origin_m: origin,
+            size_m: [xy[0], xy[1], height_m],
+            name: name,
+            tag: tag,
+            color: color,
+            storeys: floors
+          )
+          created << {
+            'facing' => facing,
+            'name' => box['name'],
+            'origin_m' => box['origin_m'],
+            'size_m' => box['size_m'],
+            'bounds_m' => box['bounds_m']
+          }
+        end
+        site_area = plan['site_m2']
+        {
+          'ok' => true,
+          'count' => created.length,
+          'wings' => created,
+          'courtyard_m' => plan['courtyard_m'].map { |n| round4(n) },
+          'courtyard_m2' => round4(plan['courtyard_m2']),
+          'footprint_m2' => round4(plan['footprint_m2']),
+          'site_w_m' => site_w_m.to_f,
+          'site_d_m' => site_d_m.to_f,
+          'site_area_m2' => round4(site_area),
+          'coverage' => coverage(plan['footprint_m2'], site_area),
+          'depth_m' => depth_m.to_f,
+          'height_m' => height_m.to_f,
+          'storeys' => floors,
           'path' => model_path
         }
       end
@@ -222,6 +282,15 @@ module SkRubyMcp
         face.reverse! if normal.respond_to?(:z) && normal.z < 0
         face.pushpull(dz)
         face
+      end
+
+      def default_wing_name(facing)
+        {
+          'south' => 'South wing',
+          'north' => 'North wing',
+          'east' => 'East wing',
+          'west' => 'West wing'
+        }[facing.to_s] || facing.to_s
       end
 
       def apply_tag(entity, tag)

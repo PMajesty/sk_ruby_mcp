@@ -20,6 +20,7 @@ module SkRubyMcp
         def instances(session:, attach:)
           [
             PlaceBox.new(session: session, attach: attach),
+            PlacePerimeter.new(session: session, attach: attach),
             ListGroups.new(session: session, attach: attach),
             SiteMetrics.new(session: session, attach: attach),
             GridOpenings.new(session: session, attach: attach)
@@ -67,7 +68,15 @@ module SkRubyMcp
           gap_v_m: { type: 'number' },
           first_sill_m: { type: 'number' },
           last_head_m: { type: 'number' },
-          min_height_m: { type: 'number' }
+          min_height_m: { type: 'number' },
+          courtyard_m: { type: 'array' },
+          courtyard_m2: { type: 'number' },
+          footprint_m2: { type: 'number' },
+          coverage: { type: 'number' },
+          depth_m: { type: 'number' },
+          height_m: { type: 'number' },
+          wings: { type: 'array' },
+          overlap_warning: { type: 'boolean' }
         },
         required: ['ok']
       }.freeze
@@ -299,6 +308,89 @@ module SkRubyMcp
         def run_on_model(model, parsed)
           with_operation(model, 'MCP place_box') do
             Runtime::ArchitectOps.new(model).place_box(**parsed)
+          end
+        end
+      end
+
+      class PlacePerimeter < ArchitectTool
+        NAME = 'place_perimeter'
+        TITLE = 'Place a courtyard ring'
+        DESCRIPTION = <<~TEXT.strip
+          Create four named axis-aligned wings around an open courtyard. Corners are not doubled: long south and north wings take the full site width; east and west fill the gap between them. All sizes are metres. Use this for perimeter housing or office blocks. The reply includes courtyard_m, footprint_m2 (union, no double-counted corners) and coverage against the site rectangle. execute_ruby remains for anything this cannot say.
+          Arguments: site_w_m, site_d_m, depth_m, height_m (required metres). origin_m (optional south-west bottom of the site, default [0,0,0]). storeys, tag, color (optional, same as place_box). name_south, name_north, name_east, name_west (optional; defaults "South wing" and so on).
+        TEXT
+        INPUT_SCHEMA = {
+          type: 'object',
+          properties: {
+            site_w_m: { type: 'number', description: 'Site width in metres (X, east).' },
+            site_d_m: { type: 'number', description: 'Site depth in metres (Y, north).' },
+            depth_m: { type: 'number', description: 'Wing thickness from the street inward, metres.' },
+            height_m: { type: 'number', description: 'Wing height in metres.' },
+            origin_m: {
+              type: 'array',
+              items: { type: 'number' },
+              minItems: 3,
+              maxItems: 3,
+              description: 'South-west bottom corner of the site in metres. Default [0,0,0].'
+            },
+            storeys: { type: 'integer', minimum: 1, description: 'Split each wing into this many stacked floor groups.' },
+            tag: { type: 'string', description: 'SketchUp tag/layer name.' },
+            color: { type: 'string', description: 'Hex #RRGGBB or r,g,b 0-255.' },
+            name_south: { type: 'string' },
+            name_north: { type: 'string' },
+            name_east: { type: 'string' },
+            name_west: { type: 'string' }
+          },
+          required: %w[site_w_m site_d_m depth_m height_m],
+          additionalProperties: false
+        }.freeze
+        ALLOWED_KEYS = INPUT_SCHEMA[:properties].keys.map(&:to_s).freeze
+        ANNOTATIONS = {
+          title: TITLE,
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: false,
+          openWorldHint: false
+        }.freeze
+
+        def parse_arguments(arguments)
+          site_w = number(arguments['site_w_m'], 'site_w_m')
+          site_d = number(arguments['site_d_m'], 'site_d_m')
+          depth = number(arguments['depth_m'], 'depth_m')
+          height = number(arguments['height_m'], 'height_m')
+          if [site_w, site_d, depth, height].any?(&:nil?)
+            return invalid('site_w_m, site_d_m, depth_m and height_m are required positive metres')
+          end
+          if [site_w, site_d, depth, height].any? { |n| n <= 0.0 }
+            return invalid('site_w_m, site_d_m, depth_m and height_m must be positive')
+          end
+
+          storeys = integer(arguments['storeys'], 'storeys')
+          return invalid('storeys must be >= 1') if !storeys.nil? && storeys < 1
+
+          names = {
+            'south' => text(arguments['name_south']),
+            'north' => text(arguments['name_north']),
+            'east' => text(arguments['name_east']),
+            'west' => text(arguments['name_west'])
+          }
+          names.delete_if { |_key, value| value.nil? || value.to_s.empty? }
+          {
+            origin_m: vec3(arguments['origin_m'], 'origin_m') || [0.0, 0.0, 0.0],
+            site_w_m: site_w,
+            site_d_m: site_d,
+            depth_m: depth,
+            height_m: height,
+            names: names,
+            tag: text(arguments['tag']),
+            color: arguments['color'],
+            storeys: storeys
+          }
+        end
+
+        def run_on_model(model, parsed)
+          with_operation(model, 'MCP place_perimeter') do
+            Runtime::ArchitectOps.new(model).place_perimeter(**parsed)
           end
         end
       end
