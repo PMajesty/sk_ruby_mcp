@@ -73,8 +73,8 @@ Optional architect pack, off by default. Create `architect_pack.on` in the exten
 |---|---|---|
 | `place_box` | `size_m`, `origin_m`, `name`, `storeys`, `tag`, `color` | Axis-aligned box in metres as a named group. Optional stacked floor groups. |
 | `list_groups` | `max_depth`, `max_items` | Nested groups with bounds in metres. Deeper than `model_status`. |
-| `site_metrics` | `site_w_m`, `site_d_m`, `site_area_m2`, `storey_h_m` | Footprint, coverage, crude GFA. |
-| `grid_openings` | `group_name`, `facing`, `cols`, `rows`, `width_m`, `height_m`, `sill_m`, `margin_m` | Punch a regular window grid on a named façade. |
+| `site_metrics` | `site_w_m`, `site_d_m`, `site_area_m2`, `storey_h_m`, `min_height_m` | Footprint, coverage, crude GFA. Groups shorter than `min_height_m` (default 1 m) are skipped. |
+| `grid_openings` | `group_name`, `facing`, `cols`, `rows`, `width_m`, `height_m`, `sill_m`, `margin_m` | Punch a regular window grid on a named façade. `sill_m` is the first-row height; leftover height is not pushed under the first row. |
 
 Reply conventions, the same for every tool:
 

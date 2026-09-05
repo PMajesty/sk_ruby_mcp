@@ -38,10 +38,23 @@ class ArchitectMathTest < Minitest::Test
     assert_equal 72, layout['slots'].length
     first = layout['slots'].first
     assert first['u'] > 0.4
-    assert first['v'] >= 3.3
+    assert_in_delta 3.3, first['v'], 1.0e-9
     last = layout['slots'].last
     assert last['u'] + last['w'] < 24.0
-    assert last['v'] + last['h'] < 33.0
+    assert last['v'] + last['h'] <= 33.0 - 0.4 + 1.0e-9
+  end
+
+  def test_grid_slots_honors_sill_exactly
+    layout = MathN.grid_slots(
+      face_w: 24.0, face_h: 33.0, cols: 8, rows: 9,
+      win_w: 1.5, win_h: 1.6, sill: 4.2, margin: 0.4
+    )
+    assert layout['ok'], layout['message']
+    first = layout['slots'].first
+    last = layout['slots'].last
+    assert_in_delta 4.2, first['v'], 1.0e-9
+    assert last['v'] + last['h'] <= 33.0 - 0.4 + 1.0e-6
+    refute_in_delta 5.6, first['v'], 0.05
   end
 
   def test_grid_slots_rejects_overflow

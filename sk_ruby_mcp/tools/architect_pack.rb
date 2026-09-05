@@ -64,7 +64,10 @@ module SkRubyMcp
           face_width_m: { type: 'number' },
           face_height_m: { type: 'number' },
           gap_u_m: { type: 'number' },
-          gap_v_m: { type: 'number' }
+          gap_v_m: { type: 'number' },
+          first_sill_m: { type: 'number' },
+          last_head_m: { type: 'number' },
+          min_height_m: { type: 'number' }
         },
         required: ['ok']
       }.freeze
@@ -343,8 +346,8 @@ module SkRubyMcp
         NAME = 'site_metrics'
         TITLE = 'Site coverage and GFA'
         DESCRIPTION = <<~TEXT.strip
-          Report footprint, coverage against a given site, and a crude GFA (top-level group XY × guessed storeys). groups_footprint_m2 sums top-level axis-aligned XY boxes and can double-count overlapping corners. outer_footprint_m2 is the model bounding rectangle. Pass site_w_m and site_d_m or site_area_m2. Does not change the model.
-          Arguments: site_w_m, site_d_m (optional metres). site_area_m2 (optional). storey_h_m (optional, default 3.3).
+          Report footprint, coverage against a given site, and a crude GFA (top-level group XY × guessed storeys). groups_footprint_m2 sums top-level axis-aligned XY boxes and can double-count overlapping corners. Groups shorter than min_height_m (default 1.0 m) are skipped so site plates and lawns do not inflate coverage. outer_footprint_m2 is the model bounding rectangle. Pass site_w_m and site_d_m or site_area_m2. Does not change the model.
+          Arguments: site_w_m, site_d_m (optional metres). site_area_m2 (optional). storey_h_m (optional, default 3.3). min_height_m (optional, default 1.0).
         TEXT
         INPUT_SCHEMA = {
           type: 'object',
@@ -352,7 +355,8 @@ module SkRubyMcp
             site_w_m: { type: 'number', description: 'Site width in metres (X).' },
             site_d_m: { type: 'number', description: 'Site depth in metres (Y).' },
             site_area_m2: { type: 'number', description: 'Site area in square metres, if not width×depth.' },
-            storey_h_m: { type: 'number', description: 'Typical storey height for GFA guess (default 3.3).' }
+            storey_h_m: { type: 'number', description: 'Typical storey height for GFA guess (default 3.3).' },
+            min_height_m: { type: 'number', description: 'Ignore top-level groups shorter than this (default 1.0 m).' }
           },
           additionalProperties: false
         }.freeze
@@ -370,7 +374,8 @@ module SkRubyMcp
             site_w_m: number(arguments['site_w_m'], 'site_w_m'),
             site_d_m: number(arguments['site_d_m'], 'site_d_m'),
             site_area_m2: number(arguments['site_area_m2'], 'site_area_m2'),
-            storey_h_m: number(arguments['storey_h_m'], 'storey_h_m')
+            storey_h_m: number(arguments['storey_h_m'], 'storey_h_m'),
+            min_height_m: number(arguments['min_height_m'], 'min_height_m')
           }
         end
 
@@ -383,8 +388,8 @@ module SkRubyMcp
         NAME = 'grid_openings'
         TITLE = 'Punch a façade grid'
         DESCRIPTION = <<~TEXT.strip
-          Punch a regular grid of rectangular holes in the largest vertical façade of a named group that faces north, south, east or west (SketchUp: Y north, X east, Z up). Holes are inner loops on the wall face, not cutting-components. Use this for windows. execute_ruby if you need irregular openings or several façades.
-          Arguments: group_name (required). facing (required: north/south/east/west). cols, rows (required integers). width_m, height_m (required metres). sill_m (optional, default 0.9, from the bottom of the face). margin_m (optional, default 0.4).
+          Punch a regular grid of rectangular holes in the largest vertical façade of a named group that faces north, south, east or west (SketchUp: Y north, X east, Z up). Holes are inner loops on the wall face, not cutting-components. Use this for windows. sill_m is the height of the first row from the bottom of the face; leftover height is split between rows and above the last row, not below the first. execute_ruby if you need irregular openings or several façades.
+          Arguments: group_name (required). facing (required: north/south/east/west). cols, rows (required integers). width_m, height_m (required metres). sill_m (optional, default 0.9, from the bottom of the face). margin_m (optional, default 0.4). The reply includes first_sill_m and last_head_m.
         TEXT
         INPUT_SCHEMA = {
           type: 'object',

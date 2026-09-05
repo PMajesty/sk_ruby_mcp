@@ -69,9 +69,11 @@ module SkRubyMcp
         }
       end
 
-      def site_metrics(site_w_m:, site_d_m:, site_area_m2:, storey_h_m:)
+      def site_metrics(site_w_m:, site_d_m:, site_area_m2:, storey_h_m:, min_height_m:)
         storey = storey_h_m.nil? ? DEFAULT_STOREY_H_M : storey_h_m.to_f
         storey = DEFAULT_STOREY_H_M if storey <= 0.0
+        min_h = min_height_m.nil? ? 1.0 : min_height_m.to_f
+        min_h = 1.0 if min_h < 0.0
         listed = list_groups(max_depth: 1, max_items: LIST_MAX_ITEMS)
         top = listed['groups'].select { |row| row['depth'].to_i.zero? }
         groups_footprint = 0.0
@@ -79,7 +81,7 @@ module SkRubyMcp
         rows = top.map do |row|
           size = row['size_m'] || [0.0, 0.0, 0.0]
           height = size[2].to_f
-          next if height < 1.0
+          next if height < min_h
 
           footprint = MathN.footprint_m2(size)
           floors = MathN.storeys_guess(height, storey)
@@ -99,6 +101,7 @@ module SkRubyMcp
         {
           'ok' => true,
           'storey_h_m' => storey,
+          'min_height_m' => round4(min_h),
           'site_w_m' => site_w_m,
           'site_d_m' => site_d_m,
           'site_area_m2' => site_area && round4(site_area),
@@ -176,6 +179,8 @@ module SkRubyMcp
             skipped += 1
           end
         end
+        first = layout['slots'].first
+        last = layout['slots'].last
         payload = {
           'ok' => true,
           'group' => group.name,
@@ -187,6 +192,8 @@ module SkRubyMcp
           'face_height_m' => round4(face_h),
           'gap_u_m' => round4(layout['gap_u']),
           'gap_v_m' => round4(layout['gap_v']),
+          'first_sill_m' => first && round4(first['v']),
+          'last_head_m' => last && round4(last['v'] + last['h']),
           'path' => model_path
         }
         payload['skip_error'] = @last_punch_error if placed.zero? && @last_punch_error

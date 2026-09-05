@@ -355,6 +355,19 @@ class ArchitectPackTest < Minitest::Test
     assert body['gfa_m2'] > 800.0
   end
 
+  def test_site_metrics_skips_short_site_plates
+    place_box.call('size_m' => [40.0, 20.0, 19.8], 'name' => 'A')
+    place_box.call('size_m' => [80.0, 60.0, 0.1], 'name' => 'Site')
+    result = Pack::SiteMetrics.new(session: @session, attach: @attach).call(
+      'site_w_m' => 80,
+      'site_d_m' => 60
+    )
+    body = parsed(result)
+    names = body['groups'].map { |row| row['name'] }
+    refute_includes names, 'Site'
+    assert_in_delta 800.0, body['groups_footprint_m2'], 1.0
+  end
+
   def test_grid_openings_missing_group
     result = Pack::GridOpenings.new(session: @session, attach: @attach).call(
       'group_name' => 'Missing',

@@ -87,7 +87,8 @@ module SkRubyMcp
         extra_u = usable_w - need_w
         extra_v = usable_h - need_h
         gap_u = extra_u / (cols_n + 1).to_f
-        gap_v = extra_v / (rows_n + 1).to_f
+        # sill_m — низ первого ряда. Лишняя высота только между рядами и над последним, не под первым.
+        gap_v = rows_n > 1 ? extra_v / (rows_n - 1).to_f : 0.0
         slots = []
         row = 0
         while row < rows_n
@@ -95,7 +96,7 @@ module SkRubyMcp
           while col < cols_n
             slots << {
               'u' => pad + gap_u + (col * (width + gap_u)),
-              'v' => sill_h + gap_v + (row * (height + gap_v)),
+              'v' => sill_h + (row * (height + gap_v)),
               'w' => width,
               'h' => height
             }
