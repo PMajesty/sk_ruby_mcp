@@ -160,14 +160,21 @@ module SkRubyMcp
 
         placed = 0
         skipped = 0
+        @last_punch_error = nil
         layout['slots'].each do |slot|
-          if punch_slot(face, slot)
+          live = largest_facing_face(group, world_tr, direction)
+          if live.nil?
+            skipped += 1
+            @last_punch_error ||= 'face vanished'
+            next
+          end
+          if punch_slot(live[0], slot)
             placed += 1
           else
             skipped += 1
           end
         end
-        {
+        payload = {
           'ok' => true,
           'group' => group.name,
           'facing' => facing.to_s.strip.downcase,
@@ -180,6 +187,8 @@ module SkRubyMcp
           'gap_v_m' => round4(layout['gap_v']),
           'path' => model_path
         }
+        payload['skip_error'] = @last_punch_error if placed.zero? && @last_punch_error
+        payload
       end
 
       private
@@ -355,8 +364,15 @@ module SkRubyMcp
       end
 
       def face_span_m(face)
+        frame = face_frame(face)
+        return [0.0, 0.0, 0.0] if frame.nil?
+
+        [frame[:width_m], frame[:height_m], frame[:width_m] * frame[:height_m]]
+      end
+
+      def face_frame(face)
         origin, right, up = face_axes(face)
-        return [0.0, 0.0, 0.0] if origin.nil?
+        return nil if origin.nil?
 
         us = []
         vs = []
@@ -365,36 +381,60 @@ module SkRubyMcp
           us << dot3(vec, right)
           vs << dot3(vec, up)
         end
-        return [0.0, 0.0, 0.0] if us.empty?
+        return nil if us.empty?
 
-        width = MathN.in_to_m(us.max - us.min)
-        height = MathN.in_to_m(vs.max - vs.min)
-        [width, height, width * height]
+        {
+          origin: origin,
+          right: right,
+          up: up,
+          u_min: us.min,
+          v_min: vs.min,
+          width_m: MathN.in_to_m(us.max - us.min),
+          height_m: MathN.in_to_m(vs.max - vs.min)
+        }
       end
 
       def punch_slot(face, slot)
-        origin, right, up = face_axes(face)
-        return false if origin.nil?
+        frame = face_frame(face)
+        return false if frame.nil?
 
-        u0 = MathN.m_to_in(slot['u'])
-        v0 = MathN.m_to_in(slot['v'])
-        uw = MathN.m_to_in(slot['w'])
-        vh = MathN.m_to_in(slot['h'])
+        u0, v0, u1, v1 = MathN.slot_uv_in(frame[:u_min], frame[:v_min], slot)
         corners = [
-          offset_point(origin, right, up, u0, v0),
-          offset_point(origin, right, up, u0 + uw, v0),
-          offset_point(origin, right, up, u0 + uw, v0 + vh),
-          offset_point(origin, right, up, u0, v0 + vh)
+          offset_point(frame[:origin], frame[:right], frame[:up], u0, v0),
+          offset_point(frame[:origin], frame[:right], frame[:up], u1, v0),
+          offset_point(frame[:origin], frame[:right], frame[:up], u1, v1),
+          offset_point(frame[:origin], frame[:right], frame[:up], u0, v1)
         ]
         corners = project_to_face(face, corners)
         ents = face.parent
-        inner = ents.add_face(corners)
-        return false if inner.nil?
-
-        inner.erase! if inner.respond_to?(:erase!) && inner.respond_to?(:valid?) && inner.valid?
+        inner = add_face_any(ents, corners)
+        if inner.nil?
+          @last_punch_error = 'add_face returned nil'
+          return false
+        end
+        if same_entity?(inner, face)
+          @last_punch_error = 'add_face returned the wall face'
+          return false
+        end
+        inner.erase! if inner.respond_to?(:erase!) && (!inner.respond_to?(:valid?) || inner.valid?)
         true
-      rescue StandardError, ScriptError
+      rescue StandardError, ScriptError => error
+        @last_punch_error = "#{error.class}: #{error.message}"
         false
+      end
+
+      def add_face_any(ents, corners)
+        inner = ents.add_face(corners)
+        return inner unless inner.nil?
+
+        ents.add_face(corners.reverse)
+      rescue StandardError, ScriptError => error
+        @last_punch_error = "#{error.class}: #{error.message}"
+        nil
+      end
+
+      def same_entity?(left, right)
+        left.equal?(right) || (left.respond_to?(:entityID) && right.respond_to?(:entityID) && left.entityID == right.entityID)
       end
 
       def face_axes(face)

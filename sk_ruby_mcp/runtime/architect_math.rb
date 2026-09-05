@@ -106,6 +106,12 @@ module SkRubyMcp
         { 'ok' => true, 'slots' => slots, 'gap_u' => gap_u, 'gap_v' => gap_v }
       end
 
+      def slot_uv_in(u_min_in, v_min_in, slot)
+        u0 = u_min_in.to_f + m_to_in(slot['u'])
+        v0 = v_min_in.to_f + m_to_in(slot['v'])
+        [u0, v0, u0 + m_to_in(slot['w']), v0 + m_to_in(slot['h'])]
+      end
+
       def failure(message)
         { 'ok' => false, 'error' => 'does_not_fit', 'message' => message, 'slots' => [] }
       end

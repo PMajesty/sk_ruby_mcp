@@ -52,4 +52,12 @@ class ArchitectMathTest < Minitest::Test
     refute layout['ok']
     assert_equal 'does_not_fit', layout['error']
   end
+
+  def test_slot_uv_is_relative_to_face_min_not_first_vertex
+    u_min = MathN.m_to_in(-24.0)
+    u0, v0, u1, _v1 = MathN.slot_uv_in(u_min, 0.0, 'u' => 0.4, 'v' => 3.3, 'w' => 1.5, 'h' => 1.6)
+    assert_in_delta MathN.m_to_in(-23.6), u0, 0.01
+    assert_in_delta MathN.m_to_in(-22.1), u1, 0.01
+    assert_in_delta MathN.m_to_in(3.3), v0, 0.01
+  end
 end
