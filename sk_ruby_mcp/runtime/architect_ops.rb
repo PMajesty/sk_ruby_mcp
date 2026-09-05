@@ -185,7 +185,7 @@ module SkRubyMcp
         }
       end
 
-      def grid_openings(group_name:, facing:, cols:, rows:, width_m:, height_m:, sill_m:, margin_m:, all_storeys: false, skip_ground: false)
+      def grid_openings(group_name:, facing:, cols:, rows:, width_m:, height_m:, sill_m:, margin_m:, all_storeys: false, skip_ground: false, skip_storeys: 0)
         direction = MathN.facing_vector(facing)
         raise ArgumentError, 'facing must be north, south, east or west' if direction.nil?
 
@@ -204,9 +204,12 @@ module SkRubyMcp
 
         group, world_tr = found
         want_all = all_storeys == true
-        skip_low = want_all && skip_ground == true
+        skip_n = skip_storeys.to_i
+        skip_n = 1 if skip_n < 1 && skip_ground == true
+        skip_n = 0 if skip_n < 0
+        skip_n = 0 unless want_all
         targets = if want_all
-                    kids = collect_storey_targets(group, world_tr, skip_ground: skip_low)
+                    kids = collect_storey_targets(group, world_tr, skip_storeys: skip_n)
                     kids.empty? ? [[group, world_tr, group.name.to_s]] : kids
                   else
                     [[group, world_tr, group.name.to_s]]
@@ -223,7 +226,8 @@ module SkRubyMcp
           first = pieces.first || {}
           first.merge(
             'all_storeys' => want_all,
-            'skip_ground' => skip_low,
+            'skip_ground' => skip_n >= 1,
+            'skip_storeys' => skip_n,
             'storeys_punched' => [],
             'targets' => pieces
           )
@@ -244,7 +248,8 @@ module SkRubyMcp
             'first_sill_m' => first_ok['first_sill_m'],
             'last_head_m' => last_ok['last_head_m'],
             'all_storeys' => want_all,
-            'skip_ground' => skip_low,
+            'skip_ground' => skip_n >= 1,
+            'skip_storeys' => skip_n,
             'storeys_punched' => successes.map { |row| row['group'] },
             'path' => model_path
           }
@@ -331,7 +336,7 @@ module SkRubyMcp
         payload
       end
 
-      def collect_storey_targets(group, world_tr, skip_ground:)
+      def collect_storey_targets(group, world_tr, skip_storeys: 0, skip_ground: false)
         kids = []
         ents = group.respond_to?(:entities) ? group.entities : nil
         return [] if ents.nil?
@@ -348,7 +353,10 @@ module SkRubyMcp
         named = kids.select { |row| storey_name?(row[2]) }
         list = named.empty? ? kids : named
         list.sort_by! { |row| [row[3], row[2]] }
-        list.shift if skip_ground && list.length > 1
+        skip_n = skip_storeys.to_i
+        skip_n = 1 if skip_n < 1 && skip_ground
+        skip_n = 0 if skip_n < 0
+        list = list.drop(skip_n) if skip_n.positive?
         list.map { |ent, tr, name, _z| [ent, tr, name] }
       end
 

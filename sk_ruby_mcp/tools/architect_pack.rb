@@ -81,6 +81,7 @@ module SkRubyMcp
           overlap_warning: { type: 'boolean' },
           all_storeys: { type: 'boolean' },
           skip_ground: { type: 'boolean' },
+          skip_storeys: { type: 'integer' },
           storeys_punched: { type: 'array' },
           targets: { type: 'array' }
         },
@@ -502,8 +503,8 @@ module SkRubyMcp
         NAME = 'grid_openings'
         TITLE = 'Punch a façade grid'
         DESCRIPTION = <<~TEXT.strip
-          Punch a regular grid of rectangular holes in the largest vertical façade of a named group that faces north, south, east or west (SketchUp: Y north, X east, Z up). Holes are inner loops on the wall face, not cutting-components. Use this for windows. sill_m is the height of the first row from the bottom of the face; leftover height is split between rows and above the last row, not below the first. If all_storeys is true, punch nested floor groups inside the named parent (Этаж 01, Этаж 02, …) instead of one tall face; skip_ground then drops the lowest floor. Typical per-floor rows=1. execute_ruby if you need irregular openings or several façades.
-          Arguments: group_name (required; group name or nested path such as South wing/Этаж 02). facing (required: north/south/east/west). cols, rows (required integers). width_m, height_m (required metres). sill_m (optional, default 0.9, from the bottom of the face). margin_m (optional, default 0.4). all_storeys (optional boolean). skip_ground (optional boolean, only with all_storeys). The reply includes first_sill_m, last_head_m and storeys_punched.
+          Punch a regular grid of rectangular holes in the largest vertical façade of a named group that faces north, south, east or west (SketchUp: Y north, X east, Z up). Holes are inner loops on the wall face, not cutting-components. Use this for windows. sill_m is the height of the first row from the bottom of the face; leftover height is split between rows and above the last row, not below the first.           If all_storeys is true, punch nested floor groups inside the named parent (Этаж 01, Этаж 02, …) instead of one tall face; skip_ground drops the lowest floor; skip_storeys drops that many lowest floors (skip_ground is skip_storeys=1). Typical per-floor rows=1. execute_ruby if you need irregular openings or several façades.
+          Arguments: group_name (required; group name or nested path such as South wing/Этаж 02). facing (required: north/south/east/west). cols, rows (required integers). width_m, height_m (required metres). sill_m (optional, default 0.9, from the bottom of the face). margin_m (optional, default 0.4). all_storeys (optional boolean). skip_ground (optional boolean, only with all_storeys). skip_storeys (optional integer >= 0, only with all_storeys). The reply includes first_sill_m, last_head_m and storeys_punched.
         TEXT
         INPUT_SCHEMA = {
           type: 'object',
@@ -526,7 +527,12 @@ module SkRubyMcp
             },
             skip_ground: {
               type: 'boolean',
-              description: 'With all_storeys, skip the lowest floor group.'
+              description: 'With all_storeys, skip the lowest floor group (same as skip_storeys=1).'
+            },
+            skip_storeys: {
+              type: 'integer',
+              minimum: 0,
+              description: 'With all_storeys, skip this many lowest floor groups (e.g. 2 to leave two floors blank).'
             }
           },
           required: %w[group_name facing cols rows width_m height_m],
@@ -555,6 +561,12 @@ module SkRubyMcp
 
           sill = number(arguments['sill_m'], 'sill_m')
           margin = number(arguments['margin_m'], 'margin_m')
+          skip_n = integer(arguments['skip_storeys'], 'skip_storeys')
+          return invalid('skip_storeys must be >= 0') if !skip_n.nil? && skip_n < 0
+
+          skip_ground = boolean(arguments['skip_ground'], 'skip_ground') == true
+          skip_n = 1 if skip_n.nil? && skip_ground
+          skip_n = 0 if skip_n.nil?
           {
             group_name: group_name,
             facing: facing,
@@ -565,7 +577,8 @@ module SkRubyMcp
             sill_m: sill.nil? ? 0.9 : sill,
             margin_m: margin.nil? ? 0.4 : margin,
             all_storeys: boolean(arguments['all_storeys'], 'all_storeys') == true,
-            skip_ground: boolean(arguments['skip_ground'], 'skip_ground') == true
+            skip_ground: skip_n >= 1,
+            skip_storeys: skip_n
           }
         end
 
