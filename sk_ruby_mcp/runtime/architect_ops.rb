@@ -175,7 +175,7 @@ module SkRubyMcp
         }
       end
 
-      def grid_openings(group_name:, facing:, cols:, rows:, width_m:, height_m:, sill_m:, margin_m:)
+      def grid_openings(group_name:, facing:, cols:, rows:, width_m:, height_m:, sill_m:, margin_m:, all_storeys: false, skip_ground: false)
         direction = MathN.facing_vector(facing)
         raise ArgumentError, 'facing must be north, south, east or west' if direction.nil?
 
@@ -193,13 +193,70 @@ module SkRubyMcp
         end
 
         group, world_tr = found
+        want_all = all_storeys == true
+        skip_low = want_all && skip_ground == true
+        targets = if want_all
+                    kids = collect_storey_targets(group, world_tr, skip_ground: skip_low)
+                    kids.empty? ? [[group, world_tr, group.name.to_s]] : kids
+                  else
+                    [[group, world_tr, group.name.to_s]]
+                  end
+
+        pieces = targets.map do |target, tr, label|
+          punch_grid_on_group(
+            target, tr, label, direction, facing,
+            cols, rows, width_m, height_m, sill_m, margin_m
+          )
+        end
+        successes = pieces.select { |row| row['ok'] }
+        if successes.empty?
+          first = pieces.first || {}
+          first.merge(
+            'all_storeys' => want_all,
+            'skip_ground' => skip_low,
+            'storeys_punched' => [],
+            'targets' => pieces
+          )
+        else
+          first_ok = successes.first
+          last_ok = successes.last
+          payload = {
+            'ok' => true,
+            'group' => group.name,
+            'facing' => facing.to_s.strip.downcase,
+            'requested' => pieces.sum { |row| row['requested'].to_i },
+            'placed' => pieces.sum { |row| row['placed'].to_i },
+            'skipped' => pieces.sum { |row| row['skipped'].to_i },
+            'face_width_m' => first_ok['face_width_m'],
+            'face_height_m' => first_ok['face_height_m'],
+            'gap_u_m' => first_ok['gap_u_m'],
+            'gap_v_m' => first_ok['gap_v_m'],
+            'first_sill_m' => first_ok['first_sill_m'],
+            'last_head_m' => last_ok['last_head_m'],
+            'all_storeys' => want_all,
+            'skip_ground' => skip_low,
+            'storeys_punched' => successes.map { |row| row['group'] },
+            'path' => model_path
+          }
+          payload['targets'] = pieces if want_all
+          payload
+        end
+      end
+
+      private
+
+      def punch_grid_on_group(group, world_tr, label, direction, facing, cols, rows, width_m, height_m, sill_m, margin_m)
         face_hit = largest_facing_face(group, world_tr, direction)
         if face_hit.nil?
           return {
             'ok' => false,
             'error' => 'face_not_found',
-            'message' => "No vertical #{facing} façade on #{group_name}",
-            'retry' => true
+            'message' => "No vertical #{facing} façade on #{label}",
+            'retry' => true,
+            'group' => label,
+            'requested' => 0,
+            'placed' => 0,
+            'skipped' => 0
           }
         end
 
@@ -219,7 +276,11 @@ module SkRubyMcp
             'ok' => false,
             'error' => layout['error'],
             'message' => layout['message'],
-            'retry' => false
+            'retry' => false,
+            'group' => label,
+            'requested' => 0,
+            'placed' => 0,
+            'skipped' => 0
           }
         end
 
@@ -243,7 +304,7 @@ module SkRubyMcp
         last = layout['slots'].last
         payload = {
           'ok' => true,
-          'group' => group.name,
+          'group' => label,
           'facing' => facing.to_s.strip.downcase,
           'requested' => layout['slots'].length,
           'placed' => placed,
@@ -260,7 +321,31 @@ module SkRubyMcp
         payload
       end
 
-      private
+      def collect_storey_targets(group, world_tr, skip_ground:)
+        kids = []
+        ents = group.respond_to?(:entities) ? group.entities : nil
+        return [] if ents.nil?
+
+        each_entity(ents) do |ent|
+          next unless classify(ent) == 'group'
+
+          name = ent.respond_to?(:name) ? ent.name.to_s : ''
+          child_tr = multiply_tr(world_tr, read_transformation(ent))
+          box = bounds_m_of(ent, world_tr)
+          zmin = box && box['min'] ? box['min'][2].to_f : 0.0
+          kids << [ent, child_tr, name.empty? ? '(unnamed)' : name, zmin]
+        end
+        named = kids.select { |row| storey_name?(row[2]) }
+        list = named.empty? ? kids : named
+        list.sort_by! { |row| [row[3], row[2]] }
+        list.shift if skip_ground && list.length > 1
+        list.map { |ent, tr, name, _z| [ent, tr, name] }
+      end
+
+      def storey_name?(name)
+        n = name.to_s
+        !!(n =~ /этаж/i || n =~ /\b(storey|story|floor|level)\b/i || n =~ /\A[FL]\d+\z/i)
+      end
 
       def add_solid_box(group, origin_m, size_m)
         ox = MathN.m_to_in(origin_m[0])

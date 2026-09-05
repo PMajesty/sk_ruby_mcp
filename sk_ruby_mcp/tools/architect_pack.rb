@@ -76,7 +76,11 @@ module SkRubyMcp
           depth_m: { type: 'number' },
           height_m: { type: 'number' },
           wings: { type: 'array' },
-          overlap_warning: { type: 'boolean' }
+          overlap_warning: { type: 'boolean' },
+          all_storeys: { type: 'boolean' },
+          skip_ground: { type: 'boolean' },
+          storeys_punched: { type: 'array' },
+          targets: { type: 'array' }
         },
         required: ['ok']
       }.freeze
@@ -221,6 +225,22 @@ module SkRubyMcp
 
         def text(value)
           value.nil? ? nil : value.to_s
+        end
+
+        def boolean(value, name)
+          return nil if value.nil?
+          return value if value == true || value == false
+          if value.is_a?(String)
+            down = value.strip.downcase
+            return true if %w[true yes 1].include?(down)
+            return false if %w[false no 0].include?(down)
+          end
+          if value.is_a?(Numeric)
+            return true if value == 1
+            return false if value == 0
+          end
+
+          raise ArgumentError, "#{name} must be a boolean"
         end
 
         def with_operation(model, label)
@@ -480,8 +500,8 @@ module SkRubyMcp
         NAME = 'grid_openings'
         TITLE = 'Punch a façade grid'
         DESCRIPTION = <<~TEXT.strip
-          Punch a regular grid of rectangular holes in the largest vertical façade of a named group that faces north, south, east or west (SketchUp: Y north, X east, Z up). Holes are inner loops on the wall face, not cutting-components. Use this for windows. sill_m is the height of the first row from the bottom of the face; leftover height is split between rows and above the last row, not below the first. execute_ruby if you need irregular openings or several façades.
-          Arguments: group_name (required; group name or nested path such as South wing/Этаж 02). facing (required: north/south/east/west). cols, rows (required integers). width_m, height_m (required metres). sill_m (optional, default 0.9, from the bottom of the face). margin_m (optional, default 0.4). The reply includes first_sill_m and last_head_m.
+          Punch a regular grid of rectangular holes in the largest vertical façade of a named group that faces north, south, east or west (SketchUp: Y north, X east, Z up). Holes are inner loops on the wall face, not cutting-components. Use this for windows. sill_m is the height of the first row from the bottom of the face; leftover height is split between rows and above the last row, not below the first. If all_storeys is true, punch nested floor groups inside the named parent (Этаж 01, Этаж 02, …) instead of one tall face; skip_ground then drops the lowest floor. Typical per-floor rows=1. execute_ruby if you need irregular openings or several façades.
+          Arguments: group_name (required; group name or nested path such as South wing/Этаж 02). facing (required: north/south/east/west). cols, rows (required integers). width_m, height_m (required metres). sill_m (optional, default 0.9, from the bottom of the face). margin_m (optional, default 0.4). all_storeys (optional boolean). skip_ground (optional boolean, only with all_storeys). The reply includes first_sill_m, last_head_m and storeys_punched.
         TEXT
         INPUT_SCHEMA = {
           type: 'object',
@@ -497,7 +517,15 @@ module SkRubyMcp
             width_m: { type: 'number', description: 'Opening width in metres.' },
             height_m: { type: 'number', description: 'Opening height in metres.' },
             sill_m: { type: 'number', description: 'Sill height from the bottom of the face in metres (default 0.9).' },
-            margin_m: { type: 'number', description: 'Keep-out from the face edges in metres (default 0.4).' }
+            margin_m: { type: 'number', description: 'Keep-out from the face edges in metres (default 0.4).' },
+            all_storeys: {
+              type: 'boolean',
+              description: 'Punch nested floor groups inside the named parent instead of one tall face.'
+            },
+            skip_ground: {
+              type: 'boolean',
+              description: 'With all_storeys, skip the lowest floor group.'
+            }
           },
           required: %w[group_name facing cols rows width_m height_m],
           additionalProperties: false
@@ -533,7 +561,9 @@ module SkRubyMcp
             width_m: width_m,
             height_m: height_m,
             sill_m: sill.nil? ? 0.9 : sill,
-            margin_m: margin.nil? ? 0.4 : margin
+            margin_m: margin.nil? ? 0.4 : margin,
+            all_storeys: boolean(arguments['all_storeys'], 'all_storeys') == true,
+            skip_ground: boolean(arguments['skip_ground'], 'skip_ground') == true
           }
         end
 

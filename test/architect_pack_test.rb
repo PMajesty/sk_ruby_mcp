@@ -400,6 +400,24 @@ class ArchitectPackTest < Minitest::Test
     assert_equal 'group_not_found', parsed(result)['error']
   end
 
+  def test_grid_openings_spec_documents_all_storeys
+    spec = Pack::GridOpenings.new(session: @session, attach: @attach).spec
+    assert spec[:inputSchema][:properties].key?(:all_storeys)
+    assert spec[:inputSchema][:properties].key?(:skip_ground)
+    assert_includes spec[:description], 'all_storeys'
+    assert SchemaCheck.valid?(spec[:outputSchema], 'ok' => true, 'all_storeys' => true, 'storeys_punched' => ['Этаж 02'])
+  end
+
+  def test_collect_storey_targets_skips_ground_floor
+    place_box.call('size_m' => [20.0, 10.0, 18.0], 'name' => 'South wing', 'storeys' => 5)
+    ops = SkRubyMcp::Runtime::ArchitectOps.new(@model)
+    group = @model.entities.items.first
+    names = ops.send(:collect_storey_targets, group, :identity, skip_ground: true).map { |row| row[2] }
+    assert_equal ['Этаж 02', 'Этаж 03', 'Этаж 04', 'Этаж 05'], names
+    all = ops.send(:collect_storey_targets, group, :identity, skip_ground: false).map { |row| row[2] }
+    assert_equal ['Этаж 01', 'Этаж 02', 'Этаж 03', 'Этаж 04', 'Этаж 05'], all
+  end
+
   def test_instances_lists_five_tools
     names = Pack.instances(session: @session, attach: @attach).map(&:name)
     assert_equal %w[place_box place_perimeter list_groups site_metrics grid_openings], names
