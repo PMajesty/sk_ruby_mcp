@@ -68,14 +68,14 @@ module SkRubyMcp
         port = running? ? @server.port : Settings.get('port')
         applied = running? ? @runtime_settings : Settings.public_snapshot
         stale = running? && @runtime_settings && @runtime_settings != Settings.public_snapshot
-        Log.sink.puts(<<~TEXT)
+        Log.emit(<<~TEXT)
           #{Log::PREFIX} #{EXTENSION_NAME} #{VERSION}: #{running? ? 'running' : 'stopped'}
           #{Log::PREFIX} url: http://#{LOOPBACK_HOST}:#{port}/mcp
           #{Log::PREFIX} settings: #{applied}
           #{Log::PREFIX} stats: #{running? ? @server.health : 'n/a'}
         TEXT
         if stale
-          Log.sink.puts("#{Log::PREFIX} settings file changed; stop and start the MCP server to apply")
+          Log.emit("#{Log::PREFIX} settings file changed; stop and start the MCP server to apply")
         end
       end
 

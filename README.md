@@ -135,7 +135,7 @@ ruby -Itest -e 'Dir["test/*_test.rb"].sort.each { |f| require "./#{f}" }'
 ruby -Itest test/protocol_test.rb
 ```
 
-242 tests, green on Ruby 2.7.8 and 3.3.0. Lint with `rubocop` (Lint cops only, target Ruby 2.7).
+243 tests, green on Ruby 2.7.8 and 3.3.0. Lint with `rubocop` (Lint cops only, target Ruby 2.7).
 
 Live checks need SketchUp running with the extension loaded. They write only under `~/sk-mcp-scratch/`.
 

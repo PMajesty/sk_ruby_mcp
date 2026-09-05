@@ -60,6 +60,38 @@ class LogTest < Minitest::Test
   ensure
     SkRubyMcp::Log.sink = previous
   end
+
+  # Sketchup::Console makes puts private and only exposes write.
+  class WriteOnlyConsole
+    attr_reader :text
+
+    def initialize
+      @text = +''
+    end
+
+    def write(chunk)
+      @text << chunk
+      chunk.bytesize
+    end
+
+    private
+
+    def puts(*)
+      raise NoMethodError, 'private method puts'
+    end
+  end
+
+  def test_errors_and_emit_reach_a_write_only_console
+    previous = SkRubyMcp::Log.sink
+    console = WriteOnlyConsole.new
+    SkRubyMcp::Log.sink = console
+    SkRubyMcp::Log.error('boom')
+    SkRubyMcp::Log.emit('status line')
+    SkRubyMcp::Log.emit("already terminated\n")
+    assert_equal "[SkRubyMcp] ERROR: boom\nstatus line\nalready terminated\n", console.text
+  ensure
+    SkRubyMcp::Log.sink = previous
+  end
 end
 
 class OutputCaptureTest < Minitest::Test

@@ -30,6 +30,13 @@ module SkRubyMcp
         define_method(name) { |message| write(name, message) }
       end
 
+      # Sketchup::Console exposes only write, its puts is private; IO and StringIO expose both.
+      def emit(text)
+        line = text.to_s
+        line += "\n" unless line.end_with?("\n")
+        @sink.write(line)
+      end
+
       private
 
       def write(level, message)
@@ -37,7 +44,7 @@ module SkRubyMcp
         @entries.shift while @entries.size > RING_SIZE
         return unless level == :error
 
-        @sink.puts("#{PREFIX} #{level.to_s.upcase}: #{message}")
+        emit("#{PREFIX} #{level.to_s.upcase}: #{message}")
       rescue StandardError
         nil
       end
