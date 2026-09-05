@@ -42,7 +42,7 @@ module SkRubyMcp
       class << self
         def parse(body)
           data = JSON.parse(body.to_s)
-        rescue JSON::ParserError => error
+        rescue JSON::ParserError
           raise ProtocolError.new(PARSE_ERROR, 'Parse error')
         else
           validate(data)

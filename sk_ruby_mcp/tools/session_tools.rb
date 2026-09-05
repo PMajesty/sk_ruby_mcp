@@ -262,7 +262,7 @@ module SkRubyMcp
       NAME = 'model_new'
       TITLE = 'New SketchUp document'
       DESCRIPTION = <<~TEXT.strip
-        Create a blank focused document for new work. If another document is focused, it is closed first, and the blank is attached within the same call (up to 15 seconds), otherwise state opening is returned (then call model_status with wait_s=15). Never call model_new twice in a row while state is opening; that cancels the pending blank. After state active, draw with execute_ruby. If the reply has temporary true, the file lives in a scratch location: call model_save with mode save_as and the path the architect wants before treating it as finished.
+        Create a blank focused document for new work. If another document is focused, it is closed first, and the blank is attached within the same call (up to 15 seconds), otherwise state opening is returned (then call model_status with wait_s=15). While state is opening, a second model_new is refused with open_in_progress and the pending blank keeps loading; poll model_status instead. After state active, draw with execute_ruby. If the reply has temporary true, the file lives in a scratch location: call model_save with mode save_as and the path the architect wants before treating it as finished.
         Arguments: if_unsaved (optional, "save" or "discard"): required when the focused document has unsaved changes; same rules as model_open.
       TEXT
       INPUT_SCHEMA = {

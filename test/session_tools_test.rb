@@ -96,7 +96,7 @@ class SessionToolsTest < Minitest::Test
 
   def test_model_new_description_warns_against_a_second_call
     text = SkRubyMcp::Tools::ModelNew.new(session: FakeSession.new(active_result)).spec[:description]
-    assert_includes text, 'Never call model_new twice'
+    assert_includes text, 'a second model_new is refused with open_in_progress'
     assert_includes text, 'if_unsaved'
   end
 

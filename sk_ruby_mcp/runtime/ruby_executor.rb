@@ -281,7 +281,7 @@ module SkRubyMcp
                       'none'
                     end
         if timeout_error?(payload)
-          timed_out = timeout_payload(payload, elapsed_ms, timeout_s)
+          timed_out = timeout_payload(elapsed_ms, timeout_s)
           payload = timeout_error_with_message(payload, timed_out)
         end
         return_value, value_truncated = status == :ok ? inspect_value(payload) : [nil, false]
@@ -308,7 +308,7 @@ module SkRubyMcp
         error.is_a?(Exception) && error.is_a?(Timeout::Error)
       end
 
-      def timeout_payload(error, elapsed_ms, limit_s)
+      def timeout_payload(elapsed_ms, limit_s)
         elapsed_s = elapsed_ms / 1000.0
         interrupted = elapsed_s <= (limit_s + 1.0)
         {
