@@ -1,6 +1,6 @@
 # SK Ruby MCP
 
-An MCP server that runs inside desktop SketchUp as a Ruby extension. Any MCP client that speaks HTTP connects to `http://127.0.0.1:7891/mcp` and gets eight tools: six that open, create, save, close, switch and revert documents, `execute_ruby` for all modelling, and `model_look` when the model needs to see the viewport.
+An MCP server that runs inside desktop SketchUp as a Ruby extension. Any MCP client that speaks HTTP connects to `http://127.0.0.1:7891/mcp` and gets eight tools: six that open, create, save, close, switch and revert documents, `execute_ruby` for all modelling, and `model_look` when the model needs to see the viewport. An optional architect pack (`place_box`, `list_groups`, `site_metrics`, `grid_openings`) stays off unless a flag file is present; without that file the surface is still eight tools.
 
 No second process, no UI inside SketchUp, no gems. Ruby stdlib only.
 
@@ -66,6 +66,15 @@ Anything that speaks MCP over Streamable HTTP works the same way, including Code
 | `model_close` | `if_unsaved` | Close the focused document. |
 | `model_revert` | none | Discard unsaved changes and reload the last save. |
 | `execute_ruby` | `code`, `operation_name`, `wrap_in_operation`, `timeout_s` | All modelling. |
+
+Optional architect pack, off by default. Create `architect_pack.on` in the extension root and restart SketchUp. Remove the file and restart to return to eight tools.
+
+| Tool | Arguments | Does |
+|---|---|---|
+| `place_box` | `size_m`, `origin_m`, `name`, `storeys`, `tag`, `color` | Axis-aligned box in metres as a named group. Optional stacked floor groups. |
+| `list_groups` | `max_depth`, `max_items` | Nested groups with bounds in metres. Deeper than `model_status`. |
+| `site_metrics` | `site_w_m`, `site_d_m`, `site_area_m2`, `storey_h_m` | Footprint, coverage, crude GFA. |
+| `grid_openings` | `group_name`, `facing`, `cols`, `rows`, `width_m`, `height_m`, `sill_m`, `margin_m` | Punch a regular window grid on a named façade. |
 
 Reply conventions, the same for every tool:
 

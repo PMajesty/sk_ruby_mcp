@@ -9,8 +9,8 @@
   runtime/output_capture runtime/ensure_active_model runtime/model_snapshot
   runtime/sketchup_document_bridge runtime/skp_header runtime/path_identity runtime/deferred
   runtime/document_pending runtime/save_policy runtime/document_session runtime/tool_call_gate runtime/ruby_executor
-  runtime/viewport_capture
-  tools/tool_support tools/execute_ruby tools/session_tools tools/model_look
+  runtime/viewport_capture runtime/architect_math runtime/architect_ops
+  tools/tool_support tools/execute_ruby tools/session_tools tools/model_look tools/architect_pack
   protocol/json_rpc protocol/mcp_handler
   transport/http_connection transport/router transport/loopback_guard transport/mcp_endpoint transport/http_server
 ].each { |relative_path| Sketchup.require(File.join(__dir__, relative_path)) }
@@ -31,6 +31,7 @@ module SkRubyMcp
       No reply or connection refused means SketchUp is closed or the server is stopped: ask the architect to start SketchUp, then call model_status. Do not assume the last file is still focused.
       Lengths are inches unless written like 10.m. Never open dialogs. Never call exit.
     TEXT
+    PACK_NOTE = 'Named modelling helpers may also be listed; use them when they match the job. execute_ruby remains for everything else.'
 
     class << self
       attr_reader :server, :document_session
@@ -141,10 +142,12 @@ module SkRubyMcp
             capturer: Runtime::ViewportCapture.new(model_provider: -> { attach.current_model })
           )
         ]
+        tools.concat(Tools::ArchitectPack.instances(session: session, attach: attach)) if Tools::ArchitectPack.enabled?
+        instructions = Tools::ArchitectPack.enabled? ? "#{INSTRUCTIONS}\n#{PACK_NOTE}" : INSTRUCTIONS
         Protocol::McpHandler.new(
           tools: tools,
           server_info: { name: SERVER_NAME, version: VERSION },
-          instructions: INSTRUCTIONS,
+          instructions: instructions,
           call_gate: call_gate
         )
       end

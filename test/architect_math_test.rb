@@ -1,0 +1,55 @@
+# frozen_string_literal: true
+
+require_relative 'test_helper'
+
+class ArchitectMathTest < Minitest::Test
+  MathN = SkRubyMcp::Runtime::ArchitectMath
+
+  def test_metre_round_trip
+    inches = MathN.m_to_in(10)
+    assert_in_delta 393.7008, inches, 0.001
+    assert_in_delta 10.0, MathN.in_to_m(inches), 1.0e-9
+  end
+
+  def test_storeys_guess_floors_a_slab
+    assert_equal 6, MathN.storeys_guess(19.8, 3.3)
+    assert_equal 1, MathN.storeys_guess(2.0, 3.3)
+    assert_equal 1, MathN.storeys_guess(10, 0)
+  end
+
+  def test_facing_aliases
+    assert_equal [0.0, -1.0, 0.0], MathN.facing_vector('south')
+    assert_equal [0.0, -1.0, 0.0], MathN.facing_vector('S')
+    assert_nil MathN.facing_vector('up')
+  end
+
+  def test_hex_color
+    assert_equal [204, 102, 68], MathN.parse_hex_color('#CC6644')
+    assert_equal [255, 0, 17], MathN.parse_hex_color('#F01')
+    assert_nil MathN.parse_hex_color('red')
+  end
+
+  def test_grid_slots_even_gaps
+    layout = MathN.grid_slots(
+      face_w: 24.0, face_h: 33.0, cols: 8, rows: 9,
+      win_w: 1.5, win_h: 1.6, sill: 3.3, margin: 0.4
+    )
+    assert layout['ok'], layout['message']
+    assert_equal 72, layout['slots'].length
+    first = layout['slots'].first
+    assert first['u'] > 0.4
+    assert first['v'] >= 3.3
+    last = layout['slots'].last
+    assert last['u'] + last['w'] < 24.0
+    assert last['v'] + last['h'] < 33.0
+  end
+
+  def test_grid_slots_rejects_overflow
+    layout = MathN.grid_slots(
+      face_w: 10.0, face_h: 10.0, cols: 20, rows: 1,
+      win_w: 1.5, win_h: 1.6, sill: 0.9, margin: 0.4
+    )
+    refute layout['ok']
+    assert_equal 'does_not_fit', layout['error']
+  end
+end
