@@ -13,7 +13,8 @@ module SkRubyMcp
         200 => 'OK', 202 => 'Accepted',
         400 => 'Bad Request', 401 => 'Unauthorized', 403 => 'Forbidden', 404 => 'Not Found',
         405 => 'Method Not Allowed', 408 => 'Request Timeout', 411 => 'Length Required',
-        413 => 'Payload Too Large', 431 => 'Request Header Fields Too Large',
+        413 => 'Payload Too Large', 415 => 'Unsupported Media Type',
+        431 => 'Request Header Fields Too Large',
         500 => 'Internal Server Error', 503 => 'Service Unavailable'
       }.freeze
       JSON_CONTENT_TYPE = 'application/json; charset=utf-8'
@@ -45,15 +46,15 @@ module SkRubyMcp
       end
     end
 
-    # Одно клиентское соединение: неблокирующее чтение с дедлайном, разбор HTTP/1.1, отправка ответа.
-    # Состояния: :reading_head, :reading_body, :complete, :rejected, :closed.
+    # Одно клиентское соединение: неблокирующее чтение, стоянка Deferred, неблокирующая запись.
+    # Состояния: :reading_head, :reading_body, :complete, :parked, :writing, :rejected, :closed.
     class HttpConnection
       Limits = Struct.new(:max_header_bytes, :max_body_bytes, :read_deadline_s, :write_deadline_s, keyword_init: true)
       DEFAULT_LIMITS = Limits.new(
         max_header_bytes: 16 * 1024,
         max_body_bytes: 1024 * 1024,
         read_deadline_s: 5.0,
-        write_deadline_s: 0.5
+        write_deadline_s: 2.0
       ).freeze
       READ_CHUNK_BYTES = 64 * 1024
       HEADER_TERMINATOR = /\r?\n\r?\n/.freeze
@@ -87,26 +88,61 @@ module SkRubyMcp
         @state
       end
 
-      def send_response(response)
-        data = response.to_s
-        deadline = Clock.now + @limits.write_deadline_s
-        until data.empty?
-          written = @socket.write_nonblock(data, exception: false)
-          if written == :wait_writable
-            remaining = deadline - Clock.now
-            return false if remaining <= 0
+      def park(deferred)
+        @state = :parked
+        @deferred = deferred
+      end
 
-            IO.select(nil, [@socket], nil, remaining)
-          else
-            data = data.byteslice(written, data.bytesize - written)
-          end
-        end
-        true
+      def parked?
+        @state == :parked
+      end
+
+      def writing?
+        @state == :writing
+      end
+
+      def deferred
+        @deferred
+      end
+
+      def peer_closed?
+        return true if @socket.closed?
+
+        chunk = @socket.recv_nonblock(1, Socket::MSG_PEEK, exception: false)
+        return false if chunk == :wait_readable
+
+        chunk.nil? || chunk.empty?
       rescue SystemCallError, IOError
-        false
+        true
+      end
+
+      def send_response(response)
+        @write_buffer = response.to_s
+        @write_deadline = Clock.now + @limits.write_deadline_s
+        @state = :writing
+        flush_write
+      end
+
+      def flush_write(now = Clock.now)
+        return :failed if @write_buffer.nil? || now >= @write_deadline
+
+        until @write_buffer.empty?
+          written = @socket.write_nonblock(@write_buffer, exception: false)
+          return :wait if written == :wait_writable
+
+          @write_buffer = @write_buffer.byteslice(written, @write_buffer.bytesize - written)
+        end
+        :complete
+      rescue SystemCallError, IOError
+        :failed
       end
 
       def close
+        if @deferred
+          @deferred.release_gate
+          @deferred = nil
+        end
+        @state = :closed
         @socket.close unless @socket.closed?
       rescue IOError
         nil

@@ -11,7 +11,7 @@ Sketchup.require(File.join(__dir__, 'sk_ruby_mcp', 'version'))
 module SkRubyMcp
   unless file_loaded?(__FILE__)
     extension = SketchupExtension.new(EXTENSION_NAME, File.join(__dir__, 'sk_ruby_mcp', 'main'))
-    extension.description = 'MCP server inside SketchUp with a single tool that executes Ruby on the main thread.'
+    extension.description = 'MCP server for SketchUp documents and live Ruby, localhost only'
     extension.version = VERSION
     extension.creator = 'Artyom Yurkov'
     Sketchup.register_extension(extension, true)

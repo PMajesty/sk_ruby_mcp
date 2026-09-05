@@ -22,11 +22,40 @@ class RubyExecutorTest < Minitest::Test
     assert_nil result.error
     assert result.model_present
     assert_kind_of Float, result.elapsed_ms
+    assert_equal 'committed', result.undo_step
+  end
+
+  def test_read_only_call_does_not_claim_an_undo_step
+    result = run_code('1 + 1', wrap: false)
+    assert result.ok
+    assert_equal 'none', result.undo_step
+    assert_empty @host.model.events
   end
 
   def test_locals_persist_between_calls_with_the_same_binding
     run_code('answer = 41')
     assert_equal '42', run_code('answer + 1').return_value
+  end
+
+  def test_reset_document_scope_drops_locals_constants_and_helpers
+    executor = RubyExecutor.new(host: @host)
+    run_code('answer = 41; FOO = 7; def helper; 1; end; class ScopeBox; end', executor: executor)
+    executor.reset_document_scope
+    local = run_code('answer', executor: executor)
+    refute local.ok
+    assert_equal 'NameError', local.error[:class]
+    constant = run_code('FOO', executor: executor)
+    refute constant.ok
+    helper = run_code('helper', executor: executor)
+    refute helper.ok
+    klass = run_code('ScopeBox', executor: executor)
+    refute klass.ok
+    Object.const_set(:SurvivesReset, 1) unless Object.const_defined?(:SurvivesReset)
+    surviving = run_code('::Object::SurvivesReset', executor: executor)
+    assert surviving.ok
+    assert_equal '1', surviving.return_value
+  ensure
+    Object.send(:remove_const, :SurvivesReset) if Object.const_defined?(:SurvivesReset)
   end
 
   def test_captures_stdout_and_stderr_and_restores_globals
@@ -61,11 +90,24 @@ class RubyExecutorTest < Minitest::Test
     assert_empty @host.model.events
   end
 
-  def test_runs_without_operation_when_no_model_is_open
+  def test_fails_closed_when_no_model_is_open
     @host.model = nil
     result = run_code('2 + 2')
+    refute result.ok
+    assert_equal 'NoActiveModel', result.error[:class]
+    refute result.model_present
+  end
+
+  def test_model_present_is_read_after_eval
+    $sk_ruby_mcp_test_host = @host
+    result = run_code(
+      '$sk_ruby_mcp_test_host.model = nil; 1',
+      wrap: false
+    )
     assert result.ok
     refute result.model_present
+  ensure
+    $sk_ruby_mcp_test_host = nil
   end
 
   def test_syntax_errors_are_reported_not_raised
@@ -94,7 +136,141 @@ class RubyExecutorTest < Minitest::Test
     assert_raises(NoMemoryError) { run_code("raise NoMemoryError, 'gone'") }
     assert_same stdout_before, $stdout
     refute @executor.busy?
-    assert_equal [[:start, 'Test op', true]], @host.model.events
+    assert_equal [[:start, 'Test op', true], [:abort]], @host.model.events
+  end
+
+  def test_exit_bang_and_exec_and_quit_are_refused_and_shadows_are_gone
+    original_exit = Kernel.instance_method(:exit!)
+    original_exec = Kernel.instance_method(:exec)
+    original_kernel_exec = Kernel.method(:exec)
+    original_kernel_exit = Kernel.method(:exit!)
+    original_process = Process.method(:exit!)
+    original_process_exec = Process.method(:exec)
+    original_process_kill = Process.method(:kill)
+    result = run_code('exit!')
+    refute result.ok
+    assert_equal 'SkRubyMcp::Runtime::RefusedCall', result.error[:class]
+    assert_includes result.error[:message], 'exit!'
+    assert_equal original_exit, Kernel.instance_method(:exit!)
+    assert_equal original_exec, Kernel.instance_method(:exec)
+    assert_equal original_process, Process.method(:exit!)
+
+    exec_result = run_code('exec("/no/such/skmcp-exec")')
+    refute exec_result.ok
+    assert_equal 'SkRubyMcp::Runtime::RefusedCall', exec_result.error[:class]
+
+    process_result = run_code('Process.exit!')
+    refute process_result.ok
+    assert_equal 'SkRubyMcp::Runtime::RefusedCall', process_result.error[:class]
+
+    process_exec = run_code('Process.exec("/no/such/skmcp-exec")')
+    refute process_exec.ok
+    assert_equal 'SkRubyMcp::Runtime::RefusedCall', process_exec.error[:class]
+    assert_equal original_process_exec, Process.method(:exec)
+
+    kernel_exec = run_code('Kernel.exec("/no/such/skmcp-exec")')
+    refute kernel_exec.ok
+    assert_equal 'SkRubyMcp::Runtime::RefusedCall', kernel_exec.error[:class]
+    assert_equal original_kernel_exec, Kernel.method(:exec)
+
+    kernel_exit = run_code('Kernel.exit!(99)')
+    refute kernel_exit.ok
+    assert_equal 'SkRubyMcp::Runtime::RefusedCall', kernel_exit.error[:class]
+    assert_equal original_kernel_exit, Kernel.method(:exit!)
+
+    process_kill = run_code('Process.kill("TERM", Process.pid)')
+    refute process_kill.ok
+    assert_equal 'SkRubyMcp::Runtime::RefusedCall', process_kill.error[:class]
+    assert_equal original_process_kill, Process.method(:kill)
+
+    original_system = Kernel.instance_method(:system)
+    original_spawn = Kernel.instance_method(:spawn)
+    original_backtick = Kernel.instance_method(:`)
+    original_popen = IO.method(:popen)
+    original_open = Kernel.instance_method(:open)
+    system_result = run_code('system("true")')
+    refute system_result.ok
+    assert_equal 'SkRubyMcp::Runtime::RefusedCall', system_result.error[:class]
+    spawn_result = run_code('spawn("true")')
+    refute spawn_result.ok
+    assert_equal 'SkRubyMcp::Runtime::RefusedCall', spawn_result.error[:class]
+    backtick_result = run_code('`true`')
+    refute backtick_result.ok
+    assert_equal 'SkRubyMcp::Runtime::RefusedCall', backtick_result.error[:class]
+    popen_result = run_code('IO.popen("true")')
+    refute popen_result.ok
+    assert_equal 'SkRubyMcp::Runtime::RefusedCall', popen_result.error[:class]
+    pipe_open = run_code('open("|true")')
+    refute pipe_open.ok
+    assert_equal 'SkRubyMcp::Runtime::RefusedCall', pipe_open.error[:class]
+    pathname_pipe = run_code("require 'pathname'; open(Pathname.new('|true'))")
+    refute pathname_pipe.ok
+    assert_equal 'SkRubyMcp::Runtime::RefusedCall', pathname_pipe.error[:class]
+    thread_result = run_code('Thread.new { 1 }')
+    refute thread_result.ok
+    assert_equal 'SkRubyMcp::Runtime::RefusedCall', thread_result.error[:class]
+    assert_equal original_system, Kernel.instance_method(:system)
+    assert_equal original_spawn, Kernel.instance_method(:spawn)
+    assert_equal original_backtick, Kernel.instance_method(:`)
+    assert_equal original_popen, IO.method(:popen)
+    assert_equal original_open, Kernel.instance_method(:open)
+
+    sketchup = Module.new do
+      def self.quit; :quit; end
+      def self.open_file(*); :opened; end
+      def self.file_new; :new; end
+    end
+    Object.const_set(:Sketchup, sketchup) unless defined?(Sketchup)
+    begin
+      original_quit = Sketchup.method(:quit)
+      original_open_file = Sketchup.method(:open_file)
+      original_file_new = Sketchup.method(:file_new)
+      quit_result = run_code('Sketchup.quit')
+      refute quit_result.ok
+      assert_equal 'SkRubyMcp::Runtime::RefusedCall', quit_result.error[:class]
+      open_file = run_code('Sketchup.open_file("/tmp/x.skp")')
+      refute open_file.ok
+      file_new = run_code('Sketchup.file_new')
+      refute file_new.ok
+      assert_equal original_quit, Sketchup.method(:quit)
+      assert_equal original_open_file, Sketchup.method(:open_file)
+      assert_equal original_file_new, Sketchup.method(:file_new)
+    ensure
+      Object.send(:remove_const, :Sketchup) if Object.const_defined?(:Sketchup) && Sketchup == sketchup
+    end
+  end
+
+  def test_large_enumerable_is_summarised
+    result = run_code('(1..100_000).to_a')
+    assert result.ok
+    assert result.return_value.bytesize < 1024
+    assert_includes result.return_value, 'count=100000'
+  end
+
+  def test_reply_carries_edit_context
+    result = run_code('1')
+    assert_equal 'root', result.edit_context
+  end
+
+  def test_timeout_past_the_limit_uses_honest_wording
+    calls = 0
+    SkRubyMcp::Clock.define_singleton_method(:now) do
+      calls += 1
+      calls == 1 ? 100.0 : 105.5
+    end
+    executor = RubyExecutor.new(host: @host, binding_source: -> { @sandbox_binding }, default_timeout_s: 0.2)
+    result = executor.execute(
+      'raise Timeout::Error, "execution exceeded 0.2 s"',
+      operation_name: 'op',
+      wrap_in_operation: true
+    )
+    refute result.ok
+    assert_includes result.error[:message], 'past the 0.2 s limit'
+    assert_includes result.error[:message], 'could not be interrupted'
+    refute result.timed_out[:interrupted]
+    assert_equal 0.2, result.timed_out[:limit_s]
+  ensure
+    SkRubyMcp::Clock.define_singleton_method(:now) { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
   end
 
   def test_reentrant_call_is_refused_while_busy
@@ -143,17 +319,17 @@ class RubyExecutorTest < Minitest::Test
     elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
     refute result.ok
     assert_equal 'Timeout::Error', result.error[:class]
-    assert_includes result.error[:message], 'exceeded 0.2 s'
+    assert_includes result.error[:message], 'interrupted at 0.2 s'
     assert_operator elapsed, :<, 2.0
     assert_equal [[:start, 'Test op', true], [:abort]], @host.model.events
     refute result.error[:backtrace].any? { |frame| frame.include?('timeout.rb') }
   end
 
-  def test_per_call_timeout_overrides_the_default_and_zero_disables_it
+  def test_per_call_timeout_overrides_the_default_and_zero_uses_the_default
     executor = RubyExecutor.new(host: @host, binding_source: -> { @sandbox_binding }, default_timeout_s: 0.05)
     slow = 'sleep 0.15; :done'
     refute executor.execute(slow, operation_name: 'op', wrap_in_operation: false).ok
     assert executor.execute(slow, operation_name: 'op', wrap_in_operation: false, timeout_s: 1).ok
-    assert executor.execute(slow, operation_name: 'op', wrap_in_operation: false, timeout_s: 0).ok
+    refute executor.execute(slow, operation_name: 'op', wrap_in_operation: false, timeout_s: 0).ok
   end
 end

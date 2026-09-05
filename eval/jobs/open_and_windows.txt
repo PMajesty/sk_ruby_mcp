@@ -1,0 +1,3 @@
+Open $HOME/sk-mcp-scratch/JOB_RUN/existing.skp and add windows to the box building that is already there.
+
+Keep the work in that file. Save in place when the windows are in. Do not write anywhere else. Do not ask the architect to click in SketchUp.

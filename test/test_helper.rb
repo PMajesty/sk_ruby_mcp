@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'minitest/autorun'
+require_relative 'schema_check'
 require 'json'
 require 'socket'
 require 'stringio'
@@ -8,8 +9,10 @@ require 'stringio'
 SOURCE_ROOT = File.expand_path('../sk_ruby_mcp', __dir__)
 %w[
   version clock log settings platform text_trimmer
-  runtime/output_capture runtime/ruby_executor
-  tools/execute_ruby
+  runtime/output_capture runtime/ensure_active_model runtime/model_snapshot runtime/skp_header
+  runtime/sketchup_document_bridge runtime/path_identity runtime/deferred
+  runtime/document_pending runtime/save_policy runtime/document_session runtime/tool_call_gate runtime/ruby_executor
+  tools/tool_support tools/execute_ruby tools/session_tools
   protocol/json_rpc protocol/mcp_handler
   transport/http_connection transport/router transport/loopback_guard transport/mcp_endpoint transport/http_server
 ].each { |relative_path| require File.join(SOURCE_ROOT, relative_path) }
@@ -59,10 +62,13 @@ module TestSupport
   end
 
   class FakeHost
-    attr_accessor :model
+    attr_accessor :model, :create_on_ensure
+    attr_reader :ensure_calls
 
     def initialize(model = FakeModel.new)
       @model = model
+      @create_on_ensure = false
+      @ensure_calls = 0
     end
 
     def active_model
@@ -102,6 +108,27 @@ module TestSupport
 
     %i[debug info warn error].each do |level|
       define_method(level) { |message| @messages << [level, message] }
+    end
+  end
+
+  class QuietSession
+    attr_reader :ensure_calls
+
+    def initialize
+      @ensure_calls = 0
+    end
+
+    def ruby_refusal
+      nil
+    end
+
+    def empty_document_next
+      SkRubyMcp::Runtime::DocumentSession::NEXT_WHEN_EMPTY
+    end
+
+    def ensure_blank
+      @ensure_calls += 1
+      SkRubyMcp::Runtime::SessionResult.new(ok: true, state: 'active')
     end
   end
 
@@ -153,6 +180,13 @@ module TestSupport
       collected[name.downcase] = value
     end
     [status_line.split(' ')[1].to_i, headers, body.to_s]
+  end
+
+  def self.write_skp(path, major: 22, minor: 0, build: 354)
+    magic = [0xFF, 0xFE, 0xFF, 0x0E].pack('C*')
+    label = "SketchUp Model".encode('UTF-16LE').b
+    version = "{#{major}.#{minor}.#{build}}".encode('UTF-16LE').b
+    File.binwrite(path, magic + label + version)
   end
 
   def self.json_rpc(method, params = nil, id: 1)

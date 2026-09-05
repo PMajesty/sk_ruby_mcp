@@ -11,11 +11,12 @@ module SkRubyMcp
       'pump_interval' => 0.02,
       'auth_token' => '',
       'wrap_in_operation' => true,
-      'execution_timeout_s' => 50.0
+      'execution_timeout_s' => 30.0
     }.freeze
     PORT_RANGE = (1024..65_535).freeze
     MIN_PUMP_INTERVAL = 0.01
     MAX_PUMP_INTERVAL = 1.0
+    MIN_EXECUTION_TIMEOUT_S = 0.05
     MAX_EXECUTION_TIMEOUT_S = 3600.0
 
     class << self
@@ -33,6 +34,13 @@ module SkRubyMcp
 
       def all
         DEFAULTS.keys.each_with_object({}) { |key, snapshot| snapshot[key] = get(key) }
+      end
+
+      def public_snapshot
+        snapshot = all
+        token = snapshot['auth_token'].to_s
+        snapshot['auth_token'] = token.empty? ? '' : '(set)'
+        snapshot
       end
 
       private
@@ -56,7 +64,8 @@ module SkRubyMcp
         case key
         when 'port' then PORT_RANGE.cover?(value) ? value : DEFAULTS['port']
         when 'pump_interval' then value.clamp(MIN_PUMP_INTERVAL, MAX_PUMP_INTERVAL)
-        when 'execution_timeout_s' then value.clamp(0.0, MAX_EXECUTION_TIMEOUT_S)
+        when 'execution_timeout_s'
+          value.positive? ? value.clamp(MIN_EXECUTION_TIMEOUT_S, MAX_EXECUTION_TIMEOUT_S) : DEFAULTS['execution_timeout_s']
         else value
         end
       end

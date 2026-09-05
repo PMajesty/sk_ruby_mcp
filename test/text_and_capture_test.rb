@@ -47,6 +47,21 @@ class TextTrimmerTest < Minitest::Test
   end
 end
 
+class LogTest < Minitest::Test
+  def test_info_stays_in_the_ring_and_does_not_print
+    previous = SkRubyMcp::Log.sink
+    sink = StringIO.new
+    SkRubyMcp::Log.sink = sink
+    SkRubyMcp::Log.info('quiet')
+    SkRubyMcp::Log.error('loud')
+    refute_includes sink.string, 'quiet'
+    assert_includes sink.string, 'loud'
+    assert SkRubyMcp::Log.entries.any? { |_time, level, message| level == :info && message == 'quiet' }
+  ensure
+    SkRubyMcp::Log.sink = previous
+  end
+end
+
 class OutputCaptureTest < Minitest::Test
   OutputCapture = SkRubyMcp::Runtime::OutputCapture
 

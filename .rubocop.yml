@@ -1,0 +1,18 @@
+AllCops:
+  TargetRubyVersion: 2.7
+  NewCops: disable
+  SuggestExtensions: false
+  DisabledByDefault: true
+  Exclude:
+    - 'vendor/**/*'
+
+Lint:
+  Enabled: true
+
+# Не синтаксис Ruby 2.7: имена полей HTTP и тесты с блоками в assert.
+Lint/StructNewOverride:
+  Enabled: false
+Lint/ShadowedException:
+  Enabled: false
+Lint/AmbiguousBlockAssociation:
+  Enabled: false

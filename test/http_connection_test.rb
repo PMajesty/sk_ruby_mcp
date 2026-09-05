@@ -129,6 +129,12 @@ class HttpConnectionTest < Minitest::Test
     assert_equal :closed, conn.pump(@now)
   end
 
+  def test_415_status_line_is_not_unknown
+    raw = HttpResponse.json(415, { error: 'nope' }).to_s
+    assert_includes raw, 'HTTP/1.1 415 Unsupported Media Type'
+    refute_includes raw.split("\r\n").first, 'Unknown'
+  end
+
   def test_send_response_writes_a_full_http_message
     conn = connection
     conn.send_response(HttpResponse.json(200, { ok: true }, headers: { 'X-Extra' => '1' }))

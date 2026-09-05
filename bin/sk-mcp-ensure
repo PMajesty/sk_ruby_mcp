@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""Start SketchUp if the SK Ruby MCP server is not listening, then wait for /health."""
+
+from __future__ import print_function
+
+import json
+import os
+import subprocess
+import sys
+import time
+
+try:
+    from urllib.request import urlopen
+except ImportError:
+    from urllib2 import urlopen
+
+PORT = int(os.environ.get("SK_RUBY_MCP_PORT", "7891"))
+HEALTH = "http://127.0.0.1:%d/health" % PORT
+WAIT_S = float(os.environ.get("SK_RUBY_MCP_WAIT_S", "60"))
+
+
+def health():
+    try:
+        response = urlopen(HEALTH, timeout=2)
+        return json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+def launch_sketchup():
+    if sys.platform == "darwin":
+        years = list(range(2026, 2021, -1))
+        env_year = os.environ.get("SKETCHUP_YEAR")
+        if env_year:
+            years = [int(env_year)] + [year for year in years if year != int(env_year)]
+        for year in years:
+            bundle = "com.sketchup.SketchUp.%d" % year
+            try:
+                subprocess.check_call(["/usr/bin/open", "-b", bundle])
+                return bundle
+            except subprocess.CalledProcessError:
+                continue
+        raise SystemExit("Could not start SketchUp. Open SketchUp once, then retry.")
+    if sys.platform.startswith("win"):
+        candidates = []
+        program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+        for year in range(2026, 2021, -1):
+            candidates.append(
+                os.path.join(program_files, "SketchUp", "SketchUp %d" % year, "SketchUp.exe")
+            )
+        for path in candidates:
+            if os.path.isfile(path):
+                subprocess.Popen([path])
+                return path
+        raise SystemExit("Could not find SketchUp.exe. Start SketchUp, then retry.")
+    raise SystemExit("Start SketchUp on this computer, then retry. Unsupported platform: %s" % sys.platform)
+
+
+def main():
+    payload = health()
+    if payload:
+        print(json.dumps({"ok": True, "already_running": True, "health": payload}))
+        return 0
+
+    launched = launch_sketchup()
+    deadline = time.time() + WAIT_S
+    while time.time() < deadline:
+        payload = health()
+        if payload:
+            print(json.dumps({"ok": True, "already_running": False, "launched": launched, "health": payload}))
+            return 0
+        time.sleep(0.5)
+
+    raise SystemExit(
+        "Started %s but %s did not answer within %s s. Open a document in SketchUp and retry."
+        % (launched, HEALTH, int(WAIT_S))
+    )
+
+
+if __name__ == "__main__":
+    sys.exit(main())

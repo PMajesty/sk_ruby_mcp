@@ -35,7 +35,7 @@ module SkRubyMcp
       def write(level, message)
         @entries << [Time.now, level, message.to_s]
         @entries.shift while @entries.size > RING_SIZE
-        return if LEVELS[level] < LEVELS[@level]
+        return unless level == :error
 
         @sink.puts("#{PREFIX} #{level.to_s.upcase}: #{message}")
       rescue StandardError

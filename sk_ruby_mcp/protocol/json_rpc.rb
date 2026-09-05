@@ -14,13 +14,13 @@ module SkRubyMcp
       INTERNAL_ERROR = -32_603
       MAX_ERROR_DETAIL_LENGTH = 200
 
-      Message = Struct.new(:id, :method, :params, keyword_init: true) do
+      Message = Struct.new(:id, :method, :params, :id_present, keyword_init: true) do
         def request?
-          !method.nil? && !id.nil?
+          !method.nil? && id_present
         end
 
         def notification?
-          !method.nil? && id.nil?
+          !method.nil? && !id_present
         end
 
         # Ответ клиента на серверный запрос: сервер запросов не посылает, такие сообщения игнорируются.
@@ -43,7 +43,7 @@ module SkRubyMcp
         def parse(body)
           data = JSON.parse(body.to_s)
         rescue JSON::ParserError => error
-          raise ProtocolError.new(PARSE_ERROR, "Parse error: #{error.message[0, MAX_ERROR_DETAIL_LENGTH]}")
+          raise ProtocolError.new(PARSE_ERROR, 'Parse error')
         else
           validate(data)
         end
@@ -64,12 +64,13 @@ module SkRubyMcp
           raise ProtocolError.new(INVALID_REQUEST, 'Batch requests are not supported') if data.is_a?(Array)
           raise ProtocolError.new(INVALID_REQUEST, 'Request must be a JSON object') unless data.is_a?(Hash)
 
+          id_present = data.key?('id')
           id = data['id']
           raise ProtocolError.new(INVALID_REQUEST, 'id must be a string, a number or null') unless valid_id?(id)
           raise ProtocolError.new(INVALID_REQUEST, 'jsonrpc must be "2.0"', id: id) unless data['jsonrpc'] == VERSION
 
           validate_method(data, id) if data.key?('method')
-          Message.new(id: id, method: data['method'], params: data['params'])
+          Message.new(id: id, method: data['method'], params: data['params'], id_present: id_present)
         end
 
         def valid_id?(id)

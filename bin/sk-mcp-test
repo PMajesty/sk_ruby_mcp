@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Запускает unit-тесты на каждом найденном интерпретаторе и ruby -c на 2.7.8.
+set -u
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+INTERPRETERS=()
+add_if_present() {
+  local path="$1"
+  if [ -x "$path" ]; then
+    INTERPRETERS+=("$path")
+  fi
+}
+
+add_if_present "${HOME}/.rbenv/versions/2.7.8/bin/ruby"
+add_if_present /usr/local/opt/ruby/bin/ruby
+add_if_present /opt/homebrew/opt/ruby/bin/ruby
+add_if_present "${HOME}/.rbenv/versions/3.3.0/bin/ruby"
+
+if [ "${#INTERPRETERS[@]}" -eq 0 ]; then
+  echo "no interpreters found" >&2
+  exit 1
+fi
+
+failed=0
+syntax_ruby=""
+
+for ruby_bin in "${INTERPRETERS[@]}"; do
+  version="$("$ruby_bin" -e 'print RUBY_VERSION')"
+  if [ "$version" = "2.7.8" ]; then
+    syntax_ruby="$ruby_bin"
+  fi
+  if "$ruby_bin" -Itest -e 'Dir["test/*_test.rb"].sort.each { |f| require "./#{f}" }'; then
+    echo "PASS ${ruby_bin} ${version}"
+  else
+    echo "FAIL ${ruby_bin} ${version}"
+    failed=1
+  fi
+done
+
+if [ -n "$syntax_ruby" ]; then
+  syntax_failed=0
+  while IFS= read -r file; do
+    if ! "$syntax_ruby" -c "$file" >/dev/null; then
+      echo "SYNTAX FAIL ${file}"
+      syntax_failed=1
+    fi
+  done < <(find sk_ruby_mcp test -name '*.rb' | sort)
+  if [ "$syntax_failed" -eq 0 ]; then
+    echo "PASS ruby -c 2.7.8"
+  else
+    echo "FAIL ruby -c 2.7.8"
+    failed=1
+  fi
+else
+  echo "SKIP ruby -c (2.7.8 not installed)"
+fi
+
+exit "$failed"

@@ -43,23 +43,31 @@ class LoopbackGuardTest < Minitest::Test
 
   def test_loopback_hosts_are_accepted_case_insensitively
     guard = LoopbackGuard.new
-    %w[127.0.0.1 127.0.0.1:7891 localhost LOCALHOST:7891 [::1]:7891].each do |host|
+    %w[127.0.0.1 127.0.0.1:7891 localhost LOCALHOST:7891 [::1]:7891 ::1 ::1:7891].each do |host|
       assert_nil guard.check(request('host' => host)), host
     end
   end
 
   def test_missing_or_foreign_host_is_forbidden
     guard = LoopbackGuard.new
-    assert_equal 403, guard.check(request({})).status
+    denied = guard.check(request({}))
+    assert_equal 403, denied.status
+    assert_includes JSON.parse(denied.body)['next'], 'Host'
+    refute_includes JSON.parse(denied.body)['next'], 'Omit Origin'
     assert_equal 403, guard.check(request('host' => 'evil.example:7891')).status
     assert_equal 403, guard.check(request('host' => '127.0.0.1.evil.example')).status
   end
 
-  def test_origin_must_be_loopback_when_present
+  def test_origin_allowlist
     guard = LoopbackGuard.new
-    assert_nil guard.check(request('host' => '127.0.0.1', 'origin' => 'http://localhost:6274'))
-    assert_equal 403, guard.check(request('host' => '127.0.0.1', 'origin' => 'https://evil.example')).status
-    assert_equal 403, guard.check(request('host' => '127.0.0.1', 'origin' => 'null')).status
+    assert_nil guard.check(request('host' => '127.0.0.1'))
+    %w[http://127.0.0.1:3000 http://localhost:6274 http://[::1]:7891].each do |origin|
+      assert_nil guard.check(request('host' => '127.0.0.1', 'origin' => origin)), origin
+    end
+    %w[https://evil.example null file:///tmp chrome-extension://abc http://evil.example].each do |origin|
+      denied = guard.check(request('host' => '127.0.0.1', 'origin' => origin))
+      assert_equal 403, denied.status, origin
+    end
   end
 
   def test_bearer_token_is_enforced_only_when_configured
@@ -70,6 +78,9 @@ class LoopbackGuardTest < Minitest::Test
     denied = guard.check(request('host' => '127.0.0.1'))
     assert_equal 401, denied.status
     assert_equal 'Bearer', denied.headers['WWW-Authenticate']
+    body = JSON.parse(denied.body)
+    assert_includes body['next'], 'Bearer'
+    refute_includes body['next'], 'SketchUp is closed'
     assert_equal 401, guard.check(request('host' => '127.0.0.1', 'authorization' => 'Bearer wrong')).status
     assert_nil guard.check(request('host' => '127.0.0.1', 'authorization' => 'Bearer secret'))
   end
@@ -124,5 +135,28 @@ class McpEndpointTest < Minitest::Test
   def test_invalid_utf8_body_is_a_clean_400
     response = post("\xFF\xFE".b)
     assert_equal 400, response.status
+  end
+
+  def test_non_json_content_type_is_rejected
+    response = post(TestSupport.json_rpc('ping'), 'content-type' => 'text/plain')
+    assert_equal 415, response.status
+    assert_includes response.to_s, 'Unsupported Media Type'
+    refute_includes response.to_s.split("\r\n").first, 'Unknown'
+  end
+
+  def test_oversized_body_becomes_a_small_error_result
+    huge = 'x' * (McpEndpoint::MAX_RESPONSE_BYTES + 64)
+    handler = Object.new
+    handler.define_singleton_method(:handle) do |_body|
+      { jsonrpc: '2.0', id: 9, result: { content: [{ type: 'text', text: huge }], isError: false } }
+    end
+    endpoint = McpEndpoint.new(handler: handler)
+    response = endpoint.call(HttpRequest.new(method: 'POST', path: '/mcp', headers: {}, body: TestSupport.json_rpc('tools/call')))
+    assert_equal 200, response.status
+    assert response.body.bytesize < 4096
+    payload = JSON.parse(response.body)
+    assert_equal 9, payload['id']
+    assert payload['result']['isError']
+    assert_includes payload['result']['content'].first['text'], 'too large'
   end
 end
