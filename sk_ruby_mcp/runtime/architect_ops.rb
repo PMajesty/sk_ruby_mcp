@@ -406,10 +406,10 @@ module SkRubyMcp
           offset_point(frame[:origin], frame[:right], frame[:up], u0, v1)
         ]
         corners = project_to_face(face, corners)
-        ents = face.parent
+        ents = entities_of_face(face)
         inner = add_face_any(ents, corners)
         if inner.nil?
-          @last_punch_error = 'add_face returned nil'
+          @last_punch_error ||= 'add_face returned nil'
           return false
         end
         if same_entity?(inner, face)
@@ -424,13 +424,21 @@ module SkRubyMcp
       end
 
       def add_face_any(ents, corners)
-        inner = ents.add_face(corners)
+        inner = ents.add_face(*Array(corners))
         return inner unless inner.nil?
 
-        ents.add_face(corners.reverse)
+        ents.add_face(*Array(corners).reverse)
       rescue StandardError, ScriptError => error
         @last_punch_error = "#{error.class}: #{error.message}"
         nil
+      end
+
+      def entities_of_face(face)
+        parent = face.parent
+        return parent if parent.respond_to?(:add_face)
+        return parent.entities if parent.respond_to?(:entities)
+
+        parent
       end
 
       def same_entity?(left, right)
