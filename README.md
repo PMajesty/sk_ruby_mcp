@@ -1,6 +1,6 @@
 # SK Ruby MCP
 
-An MCP server that runs inside desktop SketchUp as a Ruby extension. Any MCP client that speaks HTTP connects to `http://127.0.0.1:7891/mcp` and gets eight tools: six that open, create, save, close, switch and revert documents, `execute_ruby` for all modelling, and `model_look` when the model needs to see the viewport. An optional architect pack (`place_box`, `place_perimeter`, `list_groups`, `site_metrics`, `grid_openings`) stays off unless a flag file is present; without that file the surface is still eight tools.
+An MCP server that runs inside desktop SketchUp as a Ruby extension. Any MCP client that speaks HTTP connects to `http://127.0.0.1:7891/mcp` and gets eight tools: six that open, create, save, close, switch and revert documents, `execute_ruby` for all modelling, and `model_look` when the model needs to see the viewport. Optional packs stay off unless a flag file is present: the architect pack (`place_box`, `place_perimeter`, `list_groups`, `site_metrics`, `grid_openings`) and the façade pack (`facade_faces`, `facade_place_openings`, `facade_place_bands`, `facade_paint`, `facade_list`, `facade_remove`, `facade_verify`, `facade_capture`). Without the flag files the surface is still eight tools.
 
 No second process, no UI inside SketchUp, no gems. Ruby stdlib only.
 
@@ -77,6 +77,21 @@ Optional architect pack, off by default. Create `architect_pack.on` in the exten
 | `site_metrics` | `site_w_m`, `site_d_m`, `site_area_m2`, `storey_h_m`, `min_height_m` | Footprint, coverage, crude GFA. `groups_union_m2` is the XY union of top-level boxes. Groups shorter than `min_height_m` (default 1 m) are skipped. |
 | `grid_openings` | `group_name`, `facing`, `cols`, `rows`, `width_m`, `height_m`, `sill_m`, `margin_m`, `all_storeys`, `skip_ground`, `skip_storeys` | Punch a regular window grid on a named façade. `sill_m` is the first-row height; leftover height is not pushed under the first row. `all_storeys` punches nested floor groups; `skip_storeys` drops that many lowest floors (`skip_ground` is 1). |
 
+Optional façade pack, off by default. Create `facade_pack.on` in the extension root and restart SketchUp. It details one named group or component at a time from a schedule, and never cuts the wall: openings are glued cutting components, bands are proud groups, so `facade_remove` gives the plain mass back. Paths in arguments must be absolute (SketchUp resolves relative paths against its own working directory).
+
+| Tool | Arguments | Does |
+|---|---|---|
+| `facade_faces` | `object`, `camera` or `camera_file`, `image_width`, `image_height`, `min_area_m2`, `min_dot`, `make_unique`, `write_to` | Vertical faces of the object that face the camera, ordered left to right as the camera sees them: sizes, world corners, the pixel quad of each face in an image of that size, storey levels read from thin floor plates and storey cells. Face ids feed every other façade tool; `write_to` saves the same reply as JSON for scripts. |
+| `facade_place_openings` | `object`, `items`, `defaults`, `replace` | Windows and doors from a schedule. Each item: `face`, `kind` (`small_window`, `large_window`, `glass_door`, `storefront`, `custom`), horizontal `x0`/`x1` fractions of the face width (or `u0_m` + `width_m`, or `x_center` + `width_m`), vertical `storey` / `storeys` (list or `"all"`) or `z0_m`/`z1_m`, `count` to spread copies inside `x0..x1`, `frame_edges`, `frame_w_m`, `frame_out_m`, `recess_m`, `frame_color`, `glass_color`, `mullions`, `transom`, `label`. Overlapping openings and columns that do not fit are rejected per item. One undo step. |
+| `facade_place_bands` | `object`, `z_m`, `faces`, `thickness_m`, `depth_m`, `color`, `inset_m`, `align`, `label` | Belt courses, cornices and plinths as thin proud groups at world heights. |
+| `facade_paint` | `object`, `faces`, `color`, `material`, `texture`, `texture_size_m`, `clear` | Paint the object or given faces; openings and bands keep their own colours. |
+| `facade_list` | `object`, `role` | Openings and bands on the object with the values they were placed with, plus whether each opening is still glued. |
+| `facade_remove` | `object`, `role`, `faces`, `ids` | Erase façade elements by role, face or id; the wall under them is untouched. |
+| `facade_verify` | `object`, `items`, `defaults`, `tol_m` | Resolve the schedule exactly as `facade_place_openings` would and diff it with the model: `matched`, `mismatched`, `missing`, `extra`, `schedule_errors`. |
+| `facade_capture` | `image_path`, `width`, `height`, `camera` or `camera_file`, `object`, `isolate`, `id_pass`, `edges`, `background`, `hide_facade`, `keep_camera`, `antialias`, `transparent` | Clean PNG with a given camera and flat render settings; `id_pass objects|faces` paints flat id colours on black and writes the colour table next to the image as `<image>.colors.json`. Everything is restored afterwards. |
+
+`bin/sk-facade-resolve FACES.json SCHEDULE.json` resolves a schedule offline with the same code the tool uses, so scripts can validate before touching SketchUp. Relief defaults (frame 0.15 m proud, recess 0.25 m, bands 0.2 m) are deliberately deep: shallower relief z-fights the wall when the camera stands a kilometre away.
+
 Reply conventions, the same for every tool:
 
 - JSON in `structuredContent` and as pretty-printed text. Tool failures come back as `isError: true`, not as JSON-RPC errors.
@@ -147,7 +162,7 @@ ruby -Itest -e 'Dir["test/*_test.rb"].sort.each { |f| require "./#{f}" }'
 ruby -Itest test/protocol_test.rb
 ```
 
-284 tests, green on Ruby 2.7.8, 3.2.2 and 3.3.0. Lint with `rubocop` (Lint cops only, target Ruby 2.7).
+341 tests, green on Ruby 2.7.8, 3.2.2 and 3.3.0. Lint with `rubocop` (Lint cops only, target Ruby 2.7). The `http_server_test` socket tests are timing sensitive and occasionally flake on 3.3.0; rerun before treating them as a regression.
 
 Live checks need SketchUp running with the extension loaded. They write only under `~/sk-mcp-scratch/`.
 
@@ -170,12 +185,13 @@ sk_ruby_mcp/
   settings.rb           read_default / write_default
   protocol/             JSON-RPC parsing, MCP methods, howto resource
   transport/            HTTP server and pump, router, loopback guard, /mcp endpoint
-  runtime/              document session, save policy, skp header, path identity, Ruby executor, viewport capture
-  tools/                the eight tool definitions
+  runtime/              document session, save policy, skp header, path identity, Ruby executor, viewport capture,
+                        scene_geometry mixin, architect ops, facade math / scene / ops / capture
+  tools/                the eight tool definitions, model_tool base, architect_pack, facade_pack
   assets/blank.skp      fallback blank for model_new
 test/                   minitest, no SketchUp required
 eval/                   live checks against a running SketchUp
-bin/                    sk-mcp-test, sk-mcp-ensure
+bin/                    sk-mcp-test, sk-mcp-ensure, sk-facade-resolve
 ```
 
 ## Roadmap and non-goals

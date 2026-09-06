@@ -9,8 +9,10 @@
   runtime/output_capture runtime/ensure_active_model runtime/model_snapshot
   runtime/sketchup_document_bridge runtime/skp_header runtime/path_identity runtime/deferred
   runtime/document_pending runtime/save_policy runtime/document_session runtime/tool_call_gate runtime/ruby_executor
-  runtime/viewport_capture runtime/architect_math runtime/architect_ops
-  tools/tool_support tools/execute_ruby tools/session_tools tools/model_look tools/architect_pack
+  runtime/viewport_capture runtime/architect_math runtime/scene_geometry runtime/architect_ops
+  runtime/facade_math runtime/facade_scene runtime/facade_ops runtime/facade_capture
+  tools/tool_support tools/model_tool tools/execute_ruby tools/session_tools tools/model_look
+  tools/architect_pack tools/facade_pack
   protocol/json_rpc protocol/mcp_handler
   transport/http_connection transport/router transport/loopback_guard transport/mcp_endpoint transport/http_server
 ].each { |relative_path| Sketchup.require(File.join(__dir__, relative_path)) }
@@ -143,7 +145,9 @@ module SkRubyMcp
           )
         ]
         tools.concat(Tools::ArchitectPack.instances(session: session, attach: attach)) if Tools::ArchitectPack.enabled?
-        instructions = Tools::ArchitectPack.enabled? ? "#{INSTRUCTIONS}\n#{PACK_NOTE}" : INSTRUCTIONS
+        tools.concat(Tools::FacadePack.instances(session: session, attach: attach)) if Tools::FacadePack.enabled?
+        packs_on = Tools::ArchitectPack.enabled? || Tools::FacadePack.enabled?
+        instructions = packs_on ? "#{INSTRUCTIONS}\n#{PACK_NOTE}" : INSTRUCTIONS
         Protocol::McpHandler.new(
           tools: tools,
           server_info: { name: SERVER_NAME, version: VERSION },
