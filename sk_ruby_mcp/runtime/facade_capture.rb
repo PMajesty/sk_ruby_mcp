@@ -27,7 +27,7 @@ module SkRubyMcp
         @scene = scene || FacadeScene.new(model)
       end
 
-      def capture(path:, width: nil, height: nil, camera: nil, isolate: nil, id_pass: nil, edges: false,
+      def capture(path:, probe:, width: nil, height: nil, camera: nil, isolate: nil, id_pass: nil, edges: false,
                   background: nil, hide_facade: false, keep_camera: false, antialias: nil, transparent: false)
         view = @model.respond_to?(:active_view) ? @model.active_view : nil
         unless view && view.respond_to?(:write_image)
@@ -78,7 +78,7 @@ module SkRubyMcp
           'colors' => colors,
           'path' => model_path
         }
-        colors ? reply.merge(write_color_table(path, colors, size, target)) : reply
+        colors ? reply.merge(write_color_table(path, colors, size, target, probe)) : reply
       end
 
       # Таблица цветов ID-прохода ложится рядом со снимком: <image>.colors.json, чтобы скрипты нашли её сами.
@@ -89,13 +89,17 @@ module SkRubyMcp
 
       private
 
-      def write_color_table(image_path, colors, size, target)
-        sidecar = self.class.color_table_path(image_path)
-        table = colors.merge('object' => @scene.name_of(target), 'image_path' => image_path, 'width' => size[0], 'height' => size[1])
-        File.write(sidecar, JSON.pretty_generate(table))
-        { 'colors_path' => sidecar }
-      rescue SystemCallError, IOError => error
-        { 'colors_path' => nil, 'write_error' => "#{error.class}: #{error.message}" }
+      def write_color_table(image_path, colors, size, target, probe)
+        raise ArgumentError, 'color table needs a path probe' if probe.nil?
+
+        begin
+          sidecar = LocalPath.writable_file(self.class.color_table_path(image_path), probe: probe)
+          table = colors.merge('object' => @scene.name_of(target), 'image_path' => image_path, 'width' => size[0], 'height' => size[1])
+          File.write(sidecar, JSON.pretty_generate(table))
+          { 'colors_path' => sidecar }
+        rescue ArgumentError, SystemCallError, IOError => error
+          { 'colors_path' => nil, 'write_error' => "#{error.class}: #{error.message}" }
+        end
       end
 
       def frame_size(view, width, height)

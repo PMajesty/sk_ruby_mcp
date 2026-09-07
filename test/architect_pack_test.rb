@@ -2,8 +2,6 @@
 
 require_relative 'test_helper'
 require_relative 'schema_check'
-require 'tmpdir'
-require 'fileutils'
 
 class ArchitectPackTest < Minitest::Test
   Pack = SkRubyMcp::Tools::ArchitectPack
@@ -284,17 +282,9 @@ class ArchitectPackTest < Minitest::Test
     Pack::PlaceBox.new(session: @session, attach: @attach)
   end
 
-  def test_flag_defaults_off_and_follows_the_file
-    previous = Pack.flag_path
-    Dir.mktmpdir do |dir|
-      path = File.join(dir, 'architect_pack.on')
-      Pack.flag_path = path
-      refute Pack.enabled?
-      File.write(path, "on\n")
-      assert Pack.enabled?
-    end
-  ensure
-    Pack.flag_path = previous
+  def test_pack_is_gated_by_a_settings_key
+    assert_equal 'architect_pack', Pack::SETTING_KEY
+    refute Pack.respond_to?(:enabled?)
   end
 
   def test_place_box_spec_is_destructive_and_metres

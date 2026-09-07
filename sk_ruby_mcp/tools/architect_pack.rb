@@ -2,21 +2,11 @@
 
 module SkRubyMcp
   module Tools
-    # Именованные инструменты масс и проёмов. Включаются файлом architect_pack.on в корне расширения.
+    # Именованные инструменты масс и проёмов. По умолчанию включены; выключаются настройкой architect_pack.
     module ArchitectPack
-      FLAG_NAME = 'architect_pack.on'
+      SETTING_KEY = 'architect_pack'
 
       class << self
-        attr_writer :flag_path
-
-        def flag_path
-          @flag_path || File.expand_path('../../architect_pack.on', __dir__)
-        end
-
-        def enabled?
-          File.file?(flag_path)
-        end
-
         def instances(session:, attach:)
           [
             PlaceBox.new(session: session, attach: attach),

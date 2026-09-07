@@ -117,48 +117,26 @@ module SkRubyMcp
         "#{unnamed_save_message} Or model_close with if_unsaved=discard."
       end
 
+      SKP_EXAMPLE = '/Users/me/project/house.skp or C:\\Users\\me\\project\\house.skp'
+
       def validate_existing_skp(path)
         raise ArgumentError, 'path must be an absolute .skp file' unless path.is_a?(String) && !path.strip.empty?
+        raise ArgumentError, 'path must end with .skp' unless path.strip.downcase.end_with?('.skp')
 
-        cleaned = path.strip
-        reject_remote_or_nonskp!(cleaned)
-        unless absolute_path?(cleaned)
-          raise ArgumentError, 'path must be absolute, not a file name. Example: /Users/me/project/house.skp'
-        end
-        unless @bridge.file?(cleaned)
-          raise ArgumentError, "file does not exist: #{cleaned}"
-        end
-
-        header = SkpHeader.parse(cleaned)
+        resolved = LocalPath.existing_file(path, probe: path_probe, example: SKP_EXAMPLE)
+        header = SkpHeader.parse(resolved)
         raise NotASkpFile, 'path is not a SketchUp model file' unless header[:ok]
 
         refuse_newer_major!(header)
-
-        resolved = @bridge.realpath(cleaned)
-        reject_remote_or_nonskp!(resolved)
         resolved
       end
 
       def validate_save_skp(path)
         raise ArgumentError, 'path must be an absolute .skp file' unless path.is_a?(String) && !path.strip.empty?
+        raise ArgumentError, 'path must end with .skp' unless path.strip.downcase.end_with?('.skp')
 
-        cleaned = path.strip
-        reject_remote_or_nonskp!(cleaned)
-        unless absolute_path?(cleaned)
-          raise ArgumentError, 'path must be absolute, not a file name. Example: /Users/me/project/house.skp'
-        end
-
-        directory = File.dirname(cleaned)
-        unless @bridge.directory?(directory)
-          raise ArgumentError, "directory does not exist: #{directory}"
-        end
-
-        resolved_dir = @bridge.realpath(directory)
-        raise ArgumentError, 'path must be a local file, not a network share' if @bridge.remote?(resolved_dir)
-
-        resolved = File.join(resolved_dir, File.basename(cleaned))
-        raise ArgumentError, 'path must end with .skp' unless resolved.downcase.end_with?('.skp')
-        resolved
+        cleaned = LocalPath.writable_file(path, probe: path_probe, example: SKP_EXAMPLE)
+        File.join(path_probe.realpath(File.dirname(cleaned)), File.basename(cleaned))
       end
 
       def refuse_newer_major!(header)
@@ -173,17 +151,6 @@ module SkRubyMcp
         raise NewerSketchupFile,
               "This file was written by SketchUp #{written_year}. " \
               "Open it in that SketchUp, or ask the architect for a copy saved for #{host_year}."
-      end
-
-      def reject_remote_or_nonskp!(path)
-        raise ArgumentError, 'path must be a local file, not a network share' if @bridge.remote?(path)
-        raise ArgumentError, 'path must end with .skp' unless path.to_s.downcase.end_with?('.skp')
-      end
-
-      def absolute_path?(path)
-        return File.absolute_path?(path) if File.respond_to?(:absolute_path?)
-
-        path.start_with?('/') || path =~ /\A[A-Za-z]:[\\\/]/
       end
 
       def session_created_new?(path)

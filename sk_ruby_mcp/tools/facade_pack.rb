@@ -5,21 +5,11 @@ require 'json'
 module SkRubyMcp
   module Tools
     # Фасадный пакет: грани объекта в кадре камеры, проёмы как приклеенные режущие компоненты,
-    # пояса, покраска, ведомость и снимки. Включается файлом facade_pack.on в корне расширения.
+    # пояса, покраска, ведомость и снимки. По умолчанию включён; выключается настройкой facade_pack.
     module FacadePack
-      FLAG_NAME = 'facade_pack.on'
+      SETTING_KEY = 'facade_pack'
 
       class << self
-        attr_writer :flag_path
-
-        def flag_path
-          @flag_path || File.expand_path('../../facade_pack.on', __dir__)
-        end
-
-        def enabled?
-          File.file?(flag_path)
-        end
-
         def instances(session:, attach:)
           [
             Faces.new(session: session, attach: attach),
@@ -111,8 +101,8 @@ module SkRubyMcp
       module CameraArgument
         module_function
 
-        def resolve(camera, camera_file)
-          return from_file(camera_file) if camera_file
+        def resolve(camera, camera_file, probe: nil)
+          return from_file(camera_file, probe) if camera_file
           return nil if camera.nil?
           raise ArgumentError, 'camera must be an object' unless camera.is_a?(Hash)
 
@@ -128,10 +118,9 @@ module SkRubyMcp
           }
         end
 
-        def from_file(path)
-          raise ArgumentError, "camera_file not found: #{path}" unless File.file?(path.to_s)
-
-          data = JSON.parse(File.read(path.to_s))
+        def from_file(path, probe)
+          cleaned = Runtime::LocalPath.existing_file(path, probe: probe)
+          data = JSON.parse(File.read(cleaned))
           block = data.is_a?(Hash) && data['camera'].is_a?(Hash) ? data['camera'] : data
           raise ArgumentError, 'camera_file needs eye, target and up in inches' unless block.is_a?(Hash) && block['eye'] && block['target']
 
@@ -189,6 +178,32 @@ module SkRubyMcp
           value
         end
 
+        def optional_local_file(value)
+          raw = text(value)
+          return nil if raw.to_s.strip.empty?
+
+          Runtime::LocalPath.existing_file(raw, probe: @session.path_probe)
+        end
+
+        def optional_output_file(value)
+          raw = text(value)
+          return nil if raw.to_s.strip.empty?
+
+          Runtime::LocalPath.writable_file(raw, probe: @session.path_probe)
+        end
+
+        def required_output_file(arguments, key)
+          Runtime::LocalPath.writable_file(required_text(arguments, key), probe: @session.path_probe)
+        end
+
+        def camera_from(arguments)
+          CameraArgument.resolve(
+            arguments['camera'],
+            arguments['camera_file'],
+            probe: @session.path_probe
+          )
+        end
+
         def ops(model)
           Runtime::FacadeOps.new(model)
         end
@@ -223,13 +238,13 @@ module SkRubyMcp
         def parse_arguments(arguments)
           {
             object: required_text(arguments, 'object'),
-            camera: CameraArgument.resolve(arguments['camera'], arguments['camera_file']),
+            camera: camera_from(arguments),
             image_w: integer(arguments['image_width'], 'image_width'),
             image_h: integer(arguments['image_height'], 'image_height'),
             min_area_m2: number(arguments['min_area_m2'], 'min_area_m2'),
             min_dot: number(arguments['min_dot'], 'min_dot'),
             make_unique: boolean(arguments['make_unique'], 'make_unique') == true,
-            write_to: text(arguments['write_to'])
+            write_to: optional_output_file(arguments['write_to'])
           }
         end
 
@@ -368,7 +383,7 @@ module SkRubyMcp
             faces: id_list(arguments['faces'], 'faces'),
             color: text(arguments['color']),
             material: text(arguments['material']),
-            texture: text(arguments['texture']),
+            texture: optional_local_file(arguments['texture']),
             texture_size_m: number(arguments['texture_size_m'], 'texture_size_m'),
             clear: boolean(arguments['clear'], 'clear') == true
           }
@@ -517,10 +532,10 @@ module SkRubyMcp
           end
 
           {
-            path: required_text(arguments, 'image_path'),
+            path: required_output_file(arguments, 'image_path'),
             width: integer(arguments['width'], 'width'),
             height: integer(arguments['height'], 'height'),
-            camera: CameraArgument.resolve(arguments['camera'], arguments['camera_file']),
+            camera: camera_from(arguments),
             isolate: isolate ? object : nil,
             id_pass: id_mode ? { 'mode' => id_mode, 'object' => object } : nil,
             edges: boolean(arguments['edges'], 'edges') == true,
@@ -533,7 +548,7 @@ module SkRubyMcp
         end
 
         def run_on_model(model, parsed)
-          Runtime::FacadeCapture.new(model).capture(**parsed)
+          Runtime::FacadeCapture.new(model).capture(**parsed.merge(probe: @session.path_probe))
         end
       end
     end

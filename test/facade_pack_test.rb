@@ -351,6 +351,10 @@ class FacadePackTest < Minitest::Test
       nil
     end
 
+    def path_probe
+      @path_probe ||= SkRubyMcp::Runtime::PathProbe.new
+    end
+
     def status
       SessionResult.new(ok: true, state: 'active', snapshot: ModelSnapshot.new(path: nil, title: 'Untitled', modified: true, faces: 0))
     end
@@ -398,17 +402,9 @@ class FacadePackTest < Minitest::Test
     [{ 'face' => @south.persistent_id, 'kind' => 'small_window', 'x0' => 0.1, 'x1' => 0.9, 'count' => 3, 'width_m' => 1.5, 'storey' => 1 }]
   end
 
-  def test_flag_defaults_off_and_follows_the_file
-    previous = Pack.flag_path
-    Dir.mktmpdir do |dir|
-      path = File.join(dir, 'facade_pack.on')
-      Pack.flag_path = path
-      refute Pack.enabled?
-      File.write(path, "on\n")
-      assert Pack.enabled?
-    end
-  ensure
-    Pack.flag_path = previous
+  def test_pack_is_gated_by_a_settings_key
+    assert_equal 'facade_pack', Pack::SETTING_KEY
+    refute Pack.respond_to?(:enabled?)
   end
 
   def test_instances_lists_eight_tools_with_valid_specs
@@ -474,9 +470,13 @@ class FacadePackTest < Minitest::Test
       refute saved.key?('written')
 
       missing_dir = parsed(tool(Pack::Faces).call('object' => 'Tower', 'write_to' => File.join(dir, 'nope', 'x.json')))
-      assert_equal true, missing_dir['ok']
+      assert_equal 'unknown_arguments', missing_dir['error']
+      assert_includes missing_dir['message'], 'directory does not exist'
       assert_nil missing_dir['written']
-      assert_match(/Errno::ENOENT/, missing_dir['write_error'])
+
+      remote = parsed(tool(Pack::Faces).call('object' => 'Tower', 'write_to' => '//server/share/faces.json'))
+      assert_equal 'unknown_arguments', remote['error']
+      assert_includes remote['message'], 'network share'
     end
   end
 
@@ -643,10 +643,13 @@ class FacadePackTest < Minitest::Test
   end
 
   def test_capture_requires_object_for_isolate_and_a_view
-    body = parsed(tool(Pack::Capture).call('image_path' => '/tmp/x.png', 'isolate' => true))
-    assert_equal 'unknown_arguments', body['error']
-    no_view = parsed(tool(Pack::Capture).call('image_path' => '/tmp/x.png'))
-    assert_equal 'capture_failed', no_view['error']
+    Dir.mktmpdir do |dir|
+      image_path = File.join(dir, 'x.png')
+      body = parsed(tool(Pack::Capture).call('image_path' => image_path, 'isolate' => true))
+      assert_equal 'unknown_arguments', body['error']
+      no_view = parsed(tool(Pack::Capture).call('image_path' => image_path))
+      assert_equal 'capture_failed', no_view['error']
+    end
   end
 
   def test_color_table_sits_next_to_the_id_image
@@ -655,11 +658,53 @@ class FacadePackTest < Minitest::Test
     assert_equal '/tmp/a.b/tower.colors.json', SkRubyMcp::Runtime::FacadeCapture.color_table_path('/tmp/a.b/tower.PNG')
   end
 
+  def test_capture_requires_a_path_probe
+    error = assert_raises(ArgumentError) do
+      SkRubyMcp::Runtime::FacadeCapture.new(Object.new).capture(path: '/tmp/x.png')
+    end
+    assert_includes error.message, 'probe'
+  end
+
+  def test_color_table_sidecar_uses_local_path
+    capture = SkRubyMcp::Runtime::FacadeCapture.new(Object.new)
+    Dir.mktmpdir do |dir|
+      image = File.join(dir, 'shot.png')
+      sidecar = SkRubyMcp::Runtime::FacadeCapture.color_table_path(image)
+      written = capture.send(:write_color_table, image, { 'ids' => [] }, [8, 8], nil, SkRubyMcp::Runtime::PathProbe.new)
+      assert_equal sidecar, written['colors_path']
+      assert File.file?(sidecar)
+
+      File.write(sidecar, '{}')
+      probe = Object.new
+      def probe.remote?(path)
+        path.to_s.tr('\\', '/').start_with?('//')
+      end
+      def probe.file?(path)
+        File.file?(path.to_s)
+      end
+      def probe.directory?(path)
+        File.directory?(path.to_s)
+      end
+      def probe.realpath(path)
+        File.basename(path.to_s) == 'shot.colors.json' ? '//server/share/shot.colors.json' : File.expand_path(path.to_s)
+      end
+      remote = capture.send(:write_color_table, image, { 'ids' => [] }, [8, 8], nil, probe)
+      assert_nil remote['colors_path']
+      assert_includes remote['write_error'], 'network share'
+
+      missing = assert_raises(ArgumentError) do
+        capture.send(:write_color_table, image, { 'ids' => [] }, [8, 8], nil, nil)
+      end
+      assert_includes missing.message, 'path probe'
+    end
+  end
+
   def test_camera_file_reads_inches_snapshot
+    probe = SkRubyMcp::Runtime::PathProbe.new
     Dir.mktmpdir do |dir|
       path = File.join(dir, 'state.json')
       File.write(path, JSON.generate('camera' => { 'eye' => [0, -2000, 200], 'target' => [0, 0, 200], 'up' => [0, 0, 1], 'fov' => 20.0 }))
-      cam = Pack::CameraArgument.resolve(nil, path)
+      cam = Pack::CameraArgument.resolve(nil, path, probe: probe)
       assert_equal [0.0, -2000.0, 200.0], cam[:eye]
       assert_in_delta 20.0, cam[:fov], 1e-9
       assert_equal true, cam[:fov_is_height]
@@ -668,5 +713,9 @@ class FacadePackTest < Minitest::Test
     assert_in_delta IN, metres[:eye][0], 1e-6
     assert_equal [0.0, 0.0, 1.0], metres[:up]
     assert_raises(ArgumentError) { Pack::CameraArgument.resolve({ 'eye_m' => [1, 2] }, nil) }
+    error = assert_raises(ArgumentError) { Pack::CameraArgument.resolve(nil, 'relative.json') }
+    assert_includes error.message, 'absolute'
+    assert_raises(ArgumentError) { Pack::CameraArgument.resolve(nil, 'relative.json', probe: probe) }
+    assert_raises(ArgumentError) { Pack::CameraArgument.resolve(nil, '//server/share/cam.json', probe: probe) }
   end
 end

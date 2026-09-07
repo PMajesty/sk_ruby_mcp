@@ -8,9 +8,12 @@ module SkRubyMcp
     # Единственное место, где session-инструменты вызывают SketchUp API и Launch Services.
     # Методы не ждут и не качают run loop: ожидание делает DocumentSession на следующих тиках.
     class SketchupDocumentBridge
-      def initialize(attach: SketchupAttachBridge.new)
+      def initialize(attach: SketchupAttachBridge.new, path_probe: PathProbe.new)
         @attach = attach
+        @path_probe = path_probe
       end
+
+      attr_reader :path_probe
 
       def current_model
         @attach.current_model
@@ -32,6 +35,10 @@ module SkRubyMcp
         macos? ? launch_services_open(path) : windows_open(path)
       end
 
+      def defer_open_until_next_tick?
+        !macos?
+      end
+
       def host_major
         defined?(Sketchup) && Sketchup.respond_to?(:version) ? Sketchup.version.to_i : nil
       end
@@ -46,89 +53,23 @@ module SkRubyMcp
       end
 
       def file?(path)
-        File.file?(path.to_s)
+        @path_probe.file?(path)
       end
 
       def directory?(path)
-        File.directory?(path.to_s)
+        @path_probe.directory?(path)
       end
 
       def realpath(path)
-        File.realpath(path.to_s)
+        @path_probe.realpath(path)
       end
-
-      NETWORK_FS = %w[smbfs nfs afp afpfs cifs webdav nfs4 url].freeze
 
       def remote?(path)
-        cleaned = path.to_s.tr('\\', '/')
-        return true if cleaned.start_with?('//')
-        return windows_network_drive?(cleaned) if windows_path?(cleaned)
-
-        type = mount_fs_type(existing_probe(cleaned))
-        return false if type.nil? || type.empty?
-
-        NETWORK_FS.include?(type.downcase)
-      end
-
-      def mount_fs_type(path)
-        real = mount_realpath(path)
-        best_point = nil
-        best_type = nil
-        mount_entries.each do |mountpoint, fstype|
-          next unless path_on_mount?(real, mountpoint)
-          next unless best_point.nil? || mountpoint.length > best_point.length
-
-          best_point = mountpoint
-          best_type = fstype
-        end
-        best_type
-      end
-
-      def mount_entries
-        IO.popen(['/sbin/mount'], err: File::NULL, &:read).to_s.each_line.map do |line|
-          match = line.match(/\A.+ on (.+) \(([^,)]+)/)
-          next unless match
-
-          [match[1], match[2].strip]
-        end.compact
-      rescue StandardError
-        []
-      end
-
-      def mount_realpath(path)
-        File.exist?(path.to_s) ? File.realpath(path.to_s) : File.expand_path(path.to_s)
-      rescue StandardError
-        path.to_s
-      end
-
-      def path_on_mount?(real, mountpoint)
-        return real.start_with?('/') if mountpoint == '/'
-
-        real == mountpoint || real.start_with?("#{mountpoint}/")
-      end
-
-      def existing_probe(path)
-        return path if File.exist?(path.to_s)
-
-        parent = File.dirname(path.to_s)
-        File.exist?(parent) ? parent : path
-      end
-
-      def windows_path?(path)
-        path.to_s.match?(/\A[A-Za-z]:/)
-      end
-
-      def windows_network_drive?(path)
-        letter = path.to_s[/\A([A-Za-z]):/, 1]
-        return false unless letter
-
-        output = IO.popen(['cmd.exe', '/c', "net use #{letter}:"], err: File::NULL, &:read)
-        output.to_s.match?(/Remote name|\\\\|\/\//)
-      rescue StandardError
-        false
+        @path_probe.remote?(path)
       end
 
       def dispatch_blank
+        dest = nil
         source = bundled_blank_path
         return nil unless source && File.file?(source)
 
@@ -136,6 +77,9 @@ module SkRubyMcp
         FileUtils.cp(source, dest)
         open_path(dest)
         dest
+      rescue StandardError
+        FileUtils.rm_f(dest) if dest
+        nil
       end
 
       def close(model, ignore_changes)
@@ -150,7 +94,7 @@ module SkRubyMcp
       end
 
       def save_as(model, path)
-        require_saved(model.save(path), 'save-as')
+        require_saved(model.save(native_path(path)), 'save-as')
       end
 
       def save_copy(model, path, version: nil)
@@ -164,9 +108,9 @@ module SkRubyMcp
             raise ArgumentError, "This host cannot write SketchUp #{version} copies."
           end
 
-          require_saved(model.save_copy(path, constant), 'save a copy')
+          require_saved(model.save_copy(native_path(path), constant), 'save a copy')
         else
-          require_saved(model.save_copy(path), 'save a copy')
+          require_saved(model.save_copy(native_path(path)), 'save a copy')
         end
       end
 
@@ -226,13 +170,57 @@ module SkRubyMcp
       end
 
       def windows_open(path)
-        if Sketchup.version.to_i >= 26
+        native = native_path(path)
+        status = open_file_with_status(native)
+        unless open_file_succeeded?(status)
+          raise StandardError, "SketchUp refused to open #{path} (status #{status.inspect})"
+        end
+
+        :opened
+      end
+
+      def open_file_with_status(path)
+        if host_major && host_major >= 26
           Sketchup.open_file(path, with_status: true, show_version_warning_dialog: false)
         else
           Sketchup.open_file(path, with_status: true)
         end
       rescue ArgumentError
-        Sketchup.open_file(path, with_status: true)
+        begin
+          Sketchup.open_file(path, with_status: true)
+        rescue ArgumentError
+          Sketchup.open_file(path)
+        end
+      end
+
+      def open_file_succeeded?(status)
+        return false if status.nil? || status == false
+        return true if status == true
+        return true if load_success_statuses.include?(status)
+
+        false
+      end
+
+      def load_success_statuses
+        statuses = []
+        return statuses unless defined?(Sketchup::Model)
+
+        model = Sketchup::Model
+        statuses << model::LOAD_STATUS_SUCCESS if model.const_defined?(:LOAD_STATUS_SUCCESS)
+        statuses << model::LOAD_STATUS_SUCCESS_MORE_RECENT if model.const_defined?(:LOAD_STATUS_SUCCESS_MORE_RECENT)
+        statuses
+      end
+
+      def native_path(path)
+        text = path.to_s
+        return text if macos?
+
+        filesystem = Encoding.find('filesystem')
+        return text unless filesystem
+
+        text.encode(filesystem)
+      rescue EncodingError, TypeError
+        path.to_s
       end
     end
   end
