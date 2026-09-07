@@ -1,0 +1,36 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Writes dist/sk_ruby_mcp-VERSION.rbz for SketchUp Extension Manager.
+#   sk-mcp-bundle
+#   sk-mcp-bundle -o /tmp/sk_ruby_mcp.rbz
+
+require_relative '../packaging/rbz_bundler'
+
+def usage!
+  warn 'usage: sk-mcp-bundle [-o PATH.rbz]'
+  exit 2
+end
+
+output = nil
+index = 0
+while index < ARGV.length
+  case ARGV[index]
+  when '-o', '--output'
+    usage! if index + 1 >= ARGV.length
+    output = ARGV[index + 1]
+    index += 2
+  when '-h', '--help'
+    usage!
+  else
+    usage!
+  end
+end
+
+begin
+  path = Packaging::RbzBundler.new(root: File.expand_path('..', __dir__)).write(output)
+  puts path
+rescue ArgumentError, Errno::ENOENT => error
+  warn error.message
+  exit 2
+end

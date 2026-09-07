@@ -16,11 +16,15 @@ No second process, no modelling UI, no gems. Ruby stdlib only. Settings use Sket
 
 ## Install
 
-1. Copy `sk_ruby_mcp.rb` and the `sk_ruby_mcp/` folder into SketchUp's Plugins folder:
-   - macOS: `~/Library/Application Support/SketchUp 2022/SketchUp/Plugins`
-   - Windows: `%APPDATA%\SketchUp\SketchUp 2022\SketchUp\Plugins`
+Build the SketchUp installer from this repo:
 
-   Replace `2022` with your year. In the Ruby console, `Sketchup.find_support_file("Plugins")` prints the exact path.
+```sh
+bin/sk-mcp-bundle
+```
+
+That writes `dist/sk_ruby_mcp-<version>.rbz` (the version is `VERSION` in `sk_ruby_mcp/version.rb`). An `.rbz` is a ZIP of two items at the archive root: `sk_ruby_mcp.rb` and the `sk_ruby_mcp/` support folder. Then:
+
+1. In SketchUp: **Window → Extension Manager → Install Extension…** and choose that `.rbz`.
 2. Restart SketchUp. The extension is enabled by default and starts the server about one second after load when `auto_start` is true. **Plugins or Extensions → SK Ruby MCP** can start or stop the server, show a short status dialog, and edit settings.
 3. Check it:
 
@@ -37,6 +41,13 @@ SkRubyMcp::App.print_status   # running/stopped, URL, applied settings, health
 SkRubyMcp::App.stop
 SkRubyMcp::App.start
 ```
+
+For a working copy instead of the installer, copy `sk_ruby_mcp.rb` and the `sk_ruby_mcp/` folder into SketchUp's Plugins folder (do not also install the `.rbz` of the same extension):
+
+- macOS: `~/Library/Application Support/SketchUp 2022/SketchUp/Plugins`
+- Windows: `%APPDATA%\SketchUp\SketchUp 2022\SketchUp\Plugins`
+
+Replace `2022` with your year. `Sketchup.find_support_file("Plugins")` in the Ruby console prints the exact path.
 
 ## Connect a client
 
@@ -177,12 +188,13 @@ ruby -Itest -e 'Dir["test/*_test.rb"].sort.each { |f| require "./#{f}" }'
 ruby -Itest test/protocol_test.rb
 ```
 
-407 tests, green on Ruby 2.7.8, 3.2.2 and 3.3.0. Lint with `rubocop` (Lint cops only, target Ruby 2.7). The `http_server_test` socket tests are timing sensitive and occasionally flake on 3.2.2 and 3.3.0; rerun before treating them as a regression.
+429 tests, green on Ruby 2.7.8, 3.2.2 and 3.3.0. Lint with `rubocop` (Lint cops only, target Ruby 2.7). The `http_server_test` socket tests are timing sensitive and occasionally flake on 3.2.2 and 3.3.0; rerun before treating them as a regression.
 
 Live checks need SketchUp running with the extension loaded. Soak, `save_look` and `blind_tester` write only under `~/sk-mcp-scratch/`.
 
 | Command | What |
 |---|---|
+| `bin/sk-mcp-bundle` | Writes `dist/sk_ruby_mcp-<version>.rbz` for Extension Manager. `-o PATH.rbz` sets the output. Ruby stdlib only. |
 | `bin/sk-mcp-ensure` | Python 3. Starts SketchUp if `/health` does not answer and waits up to 60 s. Env: `SK_RUBY_MCP_PORT`, `SK_RUBY_MCP_WAIT_S`, `SKETCHUP_YEAR`. |
 | `ruby eval/protocol_smoke.rb` | Handshake, `tools/list`, `model_status`, `/health`, 405 and Origin checks. |
 | `ruby eval/list_tools.rb` | Prints server version, tool names and initialize instructions. |
@@ -212,7 +224,8 @@ sk_ruby_mcp/
   assets/blank.skp      fallback blank for model_new
 test/                   minitest, no SketchUp required
 eval/                   live checks against a running SketchUp
-bin/                    sk-mcp-test, sk-mcp-ensure, sk-facade-resolve
+packaging/              .rbz installer (zip writer and file list)
+bin/                    sk-mcp-test, sk-mcp-ensure, sk-facade-resolve, sk-mcp-bundle
 ```
 
 ## Roadmap and non-goals

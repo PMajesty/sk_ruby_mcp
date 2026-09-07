@@ -46,7 +46,7 @@ if [ -n "$syntax_ruby" ]; then
       echo "SYNTAX FAIL ${file}"
       syntax_failed=1
     fi
-  done < <(find sk_ruby_mcp test -name '*.rb' | sort)
+  done < <(find sk_ruby_mcp packaging test -name '*.rb' | sort)
   if [ "$syntax_failed" -eq 0 ]; then
     echo "PASS ruby -c 2.7.8"
   else
