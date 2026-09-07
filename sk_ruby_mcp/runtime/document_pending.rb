@@ -23,6 +23,11 @@ module SkRubyMcp
           return advanced unless advanced.nil?
         end
 
+        if %i[open restore revert].include?(@pending[:kind])
+          advanced = advance_in_process_open
+          return advanced unless advanced.nil?
+        end
+
         nil
       end
 
@@ -48,10 +53,12 @@ module SkRubyMcp
           unknown = refuse_unknown_count
           return unknown if unknown
           if @bridge.snapshot || leftover_documents?
+            focused = !@bridge.snapshot.nil?
             return store_failure(
               'leftover_document',
-              leftover_message(focused: !@bridge.snapshot.nil?),
-              next_step: leftover_next(focused: !@bridge.snapshot.nil?)
+              leftover_message(focused: focused),
+              next_step: leftover_next(focused: focused),
+              leftover_while_unfocused: !focused
             )
           end
 
@@ -114,13 +121,15 @@ module SkRubyMcp
       end
 
       def promote_create_to_temp_open(dest)
+        # Бланк уже открыт на этом тике: повторно не откладываем.
         @pending = {
           kind: :open,
           path: dest,
           started_at: @pending[:started_at],
           previous_path: @pending[:previous_path],
           temporary: true,
-          changed: @pending[:changed] || 'created'
+          changed: @pending[:changed] || 'created',
+          dispatched: true
         }
       end
 
@@ -128,6 +137,24 @@ module SkRubyMcp
         return accept_pending_focus if focused_matches_pending?
 
         opening_status
+      end
+
+      def advance_in_process_open
+        return nil unless @pending
+        return nil if @pending[:dispatched]
+        return nil unless defer_open_until_next_tick?
+        return nil if @pending[:close_tick] && @tick <= @pending[:close_tick]
+
+        begin
+          @bridge.open_path(@pending[:path])
+          @pending[:dispatched] = true
+        rescue StandardError => error
+          code = pending_open_failure_code
+          return restore_after_failed_dispatch(code, error, @pending[:previous_path])
+        end
+        return accept_pending_focus if focused_matches_pending?
+
+        nil
       end
 
       def accept_pending_focus
@@ -232,7 +259,9 @@ module SkRubyMcp
         return false unless snap
 
         case @pending[:kind]
-        when :open, :restore
+        when :open, :restore, :revert
+          return false unless @pending[:dispatched]
+
           !snap.untitled? && @pending[:path] && @bridge.paths_equal?(snap.path, @pending[:path])
         when :create
           created_blank?(snap)
@@ -263,9 +292,13 @@ module SkRubyMcp
       end
 
       def begin_restore(previous, code, message)
-        @bridge.open_path(previous)
-        @pending = { kind: :restore, path: previous, started_at: Clock.now, previous_path: nil }
-        store_failure(code, message, next_step: 'Call model_status until the previous file is focused.')
+        queue_file_open(kind: :restore, path: previous, previous_path: nil)
+        store_failure(
+          code,
+          message,
+          next_step: 'Call model_status until the previous file is focused.',
+          keep_pending: true
+        )
       rescue StandardError => error
         @pending = nil
         store_failure(
@@ -290,6 +323,27 @@ module SkRubyMcp
 
       def pending_label
         @pending[:path] || 'a blank document'
+      end
+
+      def pending_open_failure_code
+        return 'model_revert_failed' if @pending[:kind] == :revert || @pending[:reverted]
+
+        'model_open_failed'
+      end
+
+      def queue_file_open(kind:, path:, previous_path:, **extra)
+        @pending = {
+          kind: kind,
+          path: path,
+          started_at: Clock.now,
+          previous_path: previous_path,
+          dispatched: false,
+          close_tick: @tick
+        }.merge(extra)
+        return if defer_open_until_next_tick?
+
+        @bridge.open_path(path)
+        @pending[:dispatched] = true
       end
     end
   end

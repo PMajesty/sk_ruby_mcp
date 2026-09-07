@@ -6,11 +6,11 @@
 require 'sketchup.rb'
 require 'extensions.rb'
 
-Sketchup.require(File.join(__dir__, 'sk_ruby_mcp', 'version'))
+Sketchup.require(File.join(__dir__, 'sk_ruby_mcp', 'version').tr('\\', '/'))
 
 module SkRubyMcp
   unless file_loaded?(__FILE__)
-    extension = SketchupExtension.new(EXTENSION_NAME, File.join(__dir__, 'sk_ruby_mcp', 'main'))
+    extension = SketchupExtension.new(EXTENSION_NAME, File.join(__dir__, 'sk_ruby_mcp', 'main').tr('\\', '/'))
     extension.description = 'MCP server for SketchUp documents and live Ruby, localhost only'
     extension.version = VERSION
     extension.creator = 'Artyom Yurkov'

@@ -1,0 +1,91 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Разрешает ведомость проёмов без SketchUp той же математикой, что facade_place_openings:
+#   sk-facade-resolve FACES.json SCHEDULE.json
+# FACES.json — ответ facade_faces (write_to). SCHEDULE.json — { "items": [...], "defaults": {...} }
+# или просто массив items. Печатает JSON: resolved (метры грани и мира), errors, ok.
+
+require 'json'
+
+root = File.expand_path('..', __dir__)
+require File.join(root, 'sk_ruby_mcp', 'runtime', 'architect_math')
+require File.join(root, 'sk_ruby_mcp', 'runtime', 'facade_math')
+
+FacadeMath = SkRubyMcp::Runtime::FacadeMath
+
+def usage!
+  warn 'usage: sk-facade-resolve FACES.json SCHEDULE.json'
+  exit 2
+end
+
+def read_json(path)
+  JSON.parse(File.read(path))
+rescue Errno::ENOENT, JSON::ParserError => error
+  warn "#{path}: #{error.message}"
+  exit 2
+end
+
+def schedule_parts(schedule)
+  return [schedule, {}] if schedule.is_a?(Array)
+  return [Array(schedule['items']), schedule['defaults'].is_a?(Hash) ? schedule['defaults'] : {}] if schedule.is_a?(Hash)
+
+  [[], {}]
+end
+
+def cells_for(faces, defaults)
+  bounds = faces['bounds_m']
+  return Array(faces['storey_cells']) if bounds.nil?
+
+  levels = defaults['storeys_m']
+  return Array(faces['storey_cells']) unless levels.is_a?(Array) && !levels.empty?
+
+  FacadeMath.storey_cells(bounds['min'][2], bounds['max'][2], levels.map(&:to_f))
+end
+
+usage! if ARGV.length != 2
+
+faces = read_json(ARGV[0])
+items, defaults = schedule_parts(read_json(ARGV[1]))
+rows = Array(faces['faces'])
+by_id = rows.each_with_object({}) { |row, acc| acc[row['id'].to_s] = row }
+cells = cells_for(faces, defaults)
+table = by_id.transform_values { |row| { 'width_m' => row['width_m'], 'cells' => cells } }
+
+plan = FacadeMath.expand_items(items, defaults, table)
+errors = plan['errors'].dup
+resolved = []
+plan['items'].each do |piece|
+  row = by_id[piece['face'].to_s]
+  if row.nil?
+    errors << FacadeMath.failure(piece, "face #{piece['face']} is not in #{ARGV[0]}")
+    next
+  end
+  spec = FacadeMath.resolve_opening(piece, row, cells)
+  spec['ok'] ? resolved << spec : errors << spec
+end
+fit = FacadeMath.reject_overlaps(resolved)
+errors.concat(fit['errors'])
+
+accepted = fit['accepted'].map do |spec|
+  row = by_id[spec['face'].to_s]
+  width = row['width_m'].to_f
+  height = row['height_m'].to_f
+  spec.merge(
+    'x0' => (spec['u0_m'] / width).round(5),
+    'x1' => (spec['u1_m'] / width).round(5),
+    'y0' => ((spec['z0_m'] - row['z0_m'].to_f) / height).round(5),
+    'y1' => ((spec['z1_m'] - row['z0_m'].to_f) / height).round(5)
+  )
+end
+
+puts JSON.pretty_generate(
+  'ok' => errors.empty? && !accepted.empty?,
+  'object' => faces['object'],
+  'requested' => plan['items'].length,
+  'resolved' => accepted,
+  'errors' => errors,
+  'storey_cells' => cells,
+  'faces' => rows.map { |row| row.slice('id', 'order', 'width_m', 'height_m', 'z0_m', 'z1_m') }
+)
+exit(errors.empty? ? 0 : 1)

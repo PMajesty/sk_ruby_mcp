@@ -37,8 +37,30 @@ class DocumentSessionTest < Minitest::Test
     end
   end
 
+  class PathView
+    def initialize(bridge)
+      @bridge = bridge
+    end
+
+    def remote?(path)
+      @bridge.remote?(path)
+    end
+
+    def file?(path)
+      @bridge.file?(path)
+    end
+
+    def directory?(path)
+      @bridge.directory?(path)
+    end
+
+    def realpath(path)
+      @bridge.realpath(path)
+    end
+  end
+
   class FakeBridge
-    attr_accessor :model, :after_open, :after_close, :blank, :open_blocks, :documents, :count_unknown, :fail_dispatch, :force_remote
+    attr_accessor :model, :after_open, :after_close, :blank, :open_blocks, :documents, :count_unknown, :fail_dispatch, :force_remote, :defer_open
     attr_reader :actions
 
     def initialize(model: nil)
@@ -46,6 +68,7 @@ class DocumentSessionTest < Minitest::Test
       @actions = []
       @open_blocks = false
       @count_unknown = false
+      @defer_open = false
     end
 
     def current_model
@@ -111,6 +134,14 @@ class DocumentSessionTest < Minitest::Test
 
     def suppress_version_dialog=(value)
       @suppress_version_dialog = value
+    end
+
+    def defer_open_until_next_tick?
+      @defer_open == true
+    end
+
+    def path_probe
+      @path_view ||= PathView.new(self)
     end
 
     def open_path(path)
@@ -201,10 +232,11 @@ class DocumentSessionTest < Minitest::Test
     relative = @session.open(path: 'house.skp')
     refute relative.ok
     assert_equal 'invalid_model_path', relative.code
+    assert_includes relative.message, 'C:'
 
     missing = @session.open(path: File.join(@dir, 'nope.skp'))
     refute missing.ok
-    assert_includes missing.message, 'does not exist'
+    assert_includes missing.message, 'existing file'
   end
 
   def test_open_is_idempotent_when_the_same_file_is_focused
@@ -1254,6 +1286,21 @@ class DocumentSessionTest < Minitest::Test
     assert_equal 'no_document', later.state
   end
 
+  def test_status_clears_leftover_when_one_file_remains_focused
+    @bridge.documents = 2
+    first = @session.status
+    refute first.ok
+    assert_equal 'leftover_document', first.code
+
+    leftover = FakeDoc.new(path: @skp, title: 'house')
+    @bridge.model = leftover
+    @bridge.documents = 1
+    later = @session.status
+    assert later.ok
+    assert_equal 'active', later.state
+    assert_equal @skp, later.snapshot.path
+  end
+
   def test_revert_refuses_untitled
     @bridge.model = FakeDoc.new(path: nil, title: '', modified: true)
     result = @session.revert
@@ -1304,5 +1351,248 @@ class DocumentSessionTest < Minitest::Test
     assert_equal 'invalid_model_path', result.code
     assert_includes result.next, 'without version'
     refute_includes result.next, 'directory must exist'
+  end
+
+  def test_windows_open_closes_now_and_opens_on_the_next_tick
+    @bridge.defer_open = true
+    other = File.join(@dir, 'other.skp')
+    TestSupport.write_skp(other)
+    other = File.realpath(other)
+    name_current(@skp, 'house')
+    @bridge.after_open = FakeDoc.new(path: other, title: 'other')
+
+    first = @session.open(path: other)
+    assert first.ok
+    assert_equal 'opening', first.state
+    assert_equal [[:close, true]], @bridge.actions
+    assert @session.pending?
+
+    @session.begin_tick
+    second = @session.status
+    assert_equal 'active', second.state
+    assert_equal other, second.snapshot.path
+    assert_equal 'opened', second.changed
+    assert_equal [[:close, true], [:open, other]], @bridge.actions
+  end
+
+  def test_windows_revert_opens_on_the_next_tick
+    @bridge.defer_open = true
+    name_current(@skp, 'house')
+    @bridge.model.modified = true
+    @bridge.after_open = FakeDoc.new(path: @skp, title: 'house', modified: false)
+
+    first = @session.revert
+    assert first.ok
+    assert_equal 'opening', first.state
+    assert_equal [[:close, true]], @bridge.actions
+
+    @session.begin_tick
+    second = @session.status
+    assert second.ok
+    assert_equal 'active', second.state
+    assert_equal 'reverted', second.changed
+    assert_equal [[:close, true], [:open, @skp]], @bridge.actions
+  end
+
+  def test_windows_revert_does_not_accept_the_closing_file
+    @bridge.defer_open = true
+    name_current(@skp, 'house')
+    @bridge.model.modified = true
+    closing = @bridge.model
+    @bridge.define_singleton_method(:close) do |_model, ignore_changes|
+      @actions << [:close, ignore_changes]
+    end
+
+    first = @session.revert
+    assert first.ok
+    assert_equal 'opening', first.state
+    refute first.reverted
+    assert_same closing, @bridge.model
+    assert_equal [[:close, true]], @bridge.actions
+  end
+
+  def test_windows_deferred_open_failure_does_not_claim_active
+    @bridge.defer_open = true
+    other = File.join(@dir, 'other.skp')
+    TestSupport.write_skp(other)
+    other = File.realpath(other)
+    name_current(@skp, 'house')
+    first = @session.open(path: other)
+    assert_equal 'opening', first.state
+
+    @bridge.define_singleton_method(:open_path) do |_path|
+      @actions << [:open_failed]
+      raise StandardError, 'refused'
+    end
+    @session.begin_tick
+    second = @session.status
+    refute second.ok
+    assert_equal 'model_open_failed', second.code
+    refute_equal 'active', second.state
+  end
+
+  def test_windows_deferred_revert_failure_reports_model_revert_failed
+    @bridge.defer_open = true
+    name_current(@skp, 'house')
+    @bridge.model.modified = true
+    first = @session.revert
+    assert_equal 'opening', first.state
+
+    @bridge.define_singleton_method(:open_path) do |_path|
+      @actions << [:open_failed]
+      raise StandardError, 'refused'
+    end
+    @session.begin_tick
+    second = @session.status
+    refute second.ok
+    assert_equal 'model_revert_failed', second.code
+  end
+
+  def test_windows_deferred_restore_open_failure_is_not_revert
+    @bridge.defer_open = true
+    other = File.join(@dir, 'other.skp')
+    TestSupport.write_skp(other)
+    other = File.realpath(other)
+    name_current(@skp, 'house')
+    first = @session.open(path: other)
+    assert_equal 'opening', first.state
+
+    @bridge.define_singleton_method(:open_path) do |path|
+      @actions << [:open, path]
+      raise StandardError, 'refused'
+    end
+    @session.begin_tick
+    second = @session.status
+    refute second.ok
+    assert_equal 'model_open_failed', second.code
+    refute_equal 'model_revert_failed', second.code
+
+    @session.begin_tick
+    third = @session.status
+    refute third.ok
+    assert_equal 'model_open_failed', third.code
+    refute_equal 'model_revert_failed', third.code
+  end
+
+  def test_unfocused_leftover_stays_when_document_count_becomes_unknown
+    @bridge.documents = 2
+    first = @session.status
+    refute first.ok
+    assert_equal 'leftover_document', first.code
+
+    leftover = FakeDoc.new(path: @skp, title: 'house')
+    @bridge.model = leftover
+    @bridge.count_unknown = true
+    later = @session.status
+    refute later.ok
+    assert_equal 'leftover_document', later.code
+    refute_equal 'active', later.state
+  end
+
+  def test_save_rejects_an_existing_dest_whose_realpath_is_remote
+    dest = File.join(@dir, 'out.skp')
+    File.write(dest, 'x')
+    @bridge.model = FakeDoc.new(path: nil, title: '', modified: true)
+    @bridge.define_singleton_method(:realpath) do |path|
+      text = path.to_s
+      if File.file?(text) && File.basename(text) == 'out.skp'
+        '//server/share/out.skp'
+      elsif File.exist?(text)
+        File.realpath(text)
+      else
+        File.expand_path(text)
+      end
+    end
+    saved = @session.save(path: dest)
+    refute saved.ok
+    assert_equal 'invalid_model_path', saved.code
+    assert_includes saved.message, 'network share'
+  end
+
+  def test_focused_leftover_clears_when_the_leftover_is_closed
+    leftover = FakeDoc.new(path: @skp, title: 'house', modified: false)
+    @bridge.model = leftover
+    @bridge.define_singleton_method(:close) { |*_args| nil }
+    first = @session.new_document
+    refute first.ok
+    assert_equal 'leftover_document', first.code
+
+    @bridge.model = nil
+    @bridge.documents = 0
+    later = @session.status
+    assert later.ok
+    assert_equal 'no_document', later.state
+  end
+
+  def test_focused_leftover_clears_when_another_file_is_focused
+    leftover = FakeDoc.new(path: @skp, title: 'house', modified: false, guid: 'leftover')
+    @bridge.model = leftover
+    @bridge.define_singleton_method(:close) { |*_args| nil }
+    first = @session.new_document
+    refute first.ok
+    assert_equal 'leftover_document', first.code
+
+    other = File.join(@dir, 'other.skp')
+    TestSupport.write_skp(other)
+    other = File.realpath(other)
+    @bridge.model = FakeDoc.new(path: other, title: 'other', guid: 'other')
+    @bridge.documents = 1
+    later = @session.status
+    assert later.ok
+    assert_equal 'active', later.state
+    assert_equal other, later.snapshot.path
+  end
+
+  def test_restore_becomes_active_when_the_previous_file_is_focused
+    other = File.join(@dir, 'other.skp')
+    TestSupport.write_skp(other)
+    other = File.realpath(other)
+    name_current(other, 'other')
+    requested = @skp
+    @bridge.define_singleton_method(:open_path) do |path|
+      @actions << [:open, path]
+      raise StandardError, 'launch failed' if path == requested
+
+      @model = FakeDoc.new(path: path, title: File.basename(path, '.skp'))
+    end
+    result = @session.open(path: requested)
+    refute result.ok
+    assert_equal 'model_open_failed', result.code
+    assert @session.pending?
+
+    recovered = @session.status
+    assert recovered.ok
+    assert_equal 'active', recovered.state
+    assert_equal other, recovered.snapshot.path
+    refute_equal 'model_revert_failed', recovered.code
+  end
+
+  def test_windows_deferred_restore_becomes_active
+    @bridge.defer_open = true
+    other = File.join(@dir, 'other.skp')
+    TestSupport.write_skp(other)
+    other = File.realpath(other)
+    name_current(@skp, 'house')
+    first = @session.open(path: other)
+    assert_equal 'opening', first.state
+
+    @bridge.define_singleton_method(:open_path) do |path|
+      @actions << [:open, path]
+      raise StandardError, 'refused' if path == other
+
+      @model = FakeDoc.new(path: path, title: File.basename(path, '.skp'))
+    end
+    @session.begin_tick
+    second = @session.status
+    refute second.ok
+    assert_equal 'model_open_failed', second.code
+    assert @session.pending?
+
+    @session.begin_tick
+    third = @session.status
+    assert third.ok
+    assert_equal 'active', third.state
+    assert_equal @skp, third.snapshot.path
+    refute_equal 'model_revert_failed', third.code
   end
 end

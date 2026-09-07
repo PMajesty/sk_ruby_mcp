@@ -8,14 +8,17 @@ require 'stringio'
 
 SOURCE_ROOT = File.expand_path('../sk_ruby_mcp', __dir__)
 %w[
-  version clock log settings platform text_trimmer
+  version clock log settings settings_ui platform text_trimmer
   runtime/output_capture runtime/ensure_active_model runtime/model_snapshot runtime/skp_header
-  runtime/sketchup_document_bridge runtime/path_identity runtime/deferred
+  runtime/path_probe runtime/sketchup_document_bridge runtime/path_identity runtime/local_path runtime/deferred
   runtime/document_pending runtime/save_policy runtime/document_session runtime/tool_call_gate runtime/ruby_executor
-  runtime/viewport_capture
-  tools/tool_support tools/execute_ruby tools/session_tools tools/model_look
+  runtime/viewport_capture runtime/architect_math runtime/scene_geometry runtime/architect_ops
+  runtime/facade_math runtime/facade_scene runtime/facade_ops runtime/facade_capture
+  tools/tool_support tools/model_tool tools/execute_ruby tools/session_tools tools/model_look
+  tools/architect_pack tools/facade_pack
   protocol/json_rpc protocol/mcp_handler
   transport/http_connection transport/router transport/loopback_guard transport/mcp_endpoint transport/http_server
+  app
 ].each { |relative_path| require File.join(SOURCE_ROOT, relative_path) }
 
 SkRubyMcp::Log.sink = StringIO.new
@@ -194,5 +197,24 @@ module TestSupport
     message = { jsonrpc: '2.0', id: id, method: method }
     message[:params] = params if params
     JSON.generate(message)
+  end
+
+  def self.sketchup_defaults_store(store = {})
+    sketchup = Object.new
+    sketchup.define_singleton_method(:read_default) { |_section, key| store[key] }
+    sketchup.define_singleton_method(:write_default) { |_section, key, value| store[key] = value }
+    sketchup
+  end
+
+  def self.replace_sketchup(sketchup)
+    previous = Object.const_defined?(:Sketchup) ? Object.const_get(:Sketchup) : nil
+    Object.send(:remove_const, :Sketchup) if Object.const_defined?(:Sketchup)
+    Object.const_set(:Sketchup, sketchup)
+    previous
+  end
+
+  def self.restore_sketchup(previous)
+    Object.send(:remove_const, :Sketchup) if Object.const_defined?(:Sketchup)
+    Object.const_set(:Sketchup, previous) if previous
   end
 end

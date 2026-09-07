@@ -41,6 +41,9 @@ module SkRubyMcp
         @last_focus_identity = nil
         @focus_changed_at = nil
         @timeout_requested = nil
+        # Sticky leftover без фокуса (лишние окна): снимается, когда extras исчезли.
+        @leftover_while_unfocused = false
+        @leftover_focus_identity = nil
       end
 
       def pending?
@@ -53,6 +56,10 @@ module SkRubyMcp
 
       def empty_document_next
         NEXT_WHEN_EMPTY
+      end
+
+      def path_probe
+        @bridge.path_probe
       end
 
       def ruby_refusal
@@ -153,15 +160,8 @@ module SkRubyMcp
         switched = switch_away(if_unsaved)
         return decorate(switched) unless switched.nil?
 
-        @pending = {
-          kind: :open,
-          path: requested,
-          started_at: Clock.now,
-          previous_path: previous,
-          changed: 'opened'
-        }
         begin
-          @bridge.open_path(requested)
+          queue_file_open(kind: :open, path: requested, previous_path: previous, changed: 'opened')
         rescue StandardError => error
           return decorate(restore_after_failed_dispatch('model_open_failed', error, previous))
         end
@@ -372,16 +372,14 @@ module SkRubyMcp
         remember(requested)
         @bridge.close(model, true)
         note_switch
-        @pending = {
-          kind: :open,
-          path: requested,
-          started_at: Clock.now,
-          previous_path: requested,
-          changed: 'reverted',
-          reverted: true
-        }
         begin
-          @bridge.open_path(requested)
+          queue_file_open(
+            kind: :revert,
+            path: requested,
+            previous_path: requested,
+            changed: 'reverted',
+            reverted: true
+          )
         rescue StandardError => error
           return decorate(restore_after_failed_dispatch('model_revert_failed', error, requested))
         end
@@ -404,6 +402,10 @@ module SkRubyMcp
           'open_in_progress',
           "A document operation is in progress for #{pending_label}. Call model_status until state is active or failed."
         )
+      end
+
+      def defer_open_until_next_tick?
+        @bridge.defer_open_until_next_tick?
       end
 
       def leftover_documents?
@@ -449,7 +451,12 @@ module SkRubyMcp
         return unknown if unknown
         return nil unless leftover_documents?
 
-        store_failure('leftover_document', leftover_message(focused: false), next_step: leftover_next(focused: false))
+        store_failure(
+          'leftover_document',
+          leftover_message(focused: false),
+          next_step: leftover_next(focused: false),
+          leftover_while_unfocused: true
+        )
       end
 
       def leftover_message(focused:)
@@ -511,7 +518,9 @@ module SkRubyMcp
 
         case @last_failure.code
         when 'leftover_document'
-          clear_failure unless leftover_documents? || @bridge.snapshot
+          if !document_count_unknown? && !leftover_documents?
+            clear_failure if @leftover_while_unfocused || @bridge.current_model.nil? || leftover_focus_replaced?
+          end
         when 'document_count_unknown'
           clear_failure unless document_count_unknown?
         when 'model_new_failed'
@@ -530,6 +539,19 @@ module SkRubyMcp
         return unless model
 
         @bridge.close(model, true)
+      end
+
+      def leftover_focus_replaced?
+        return false if @leftover_focus_identity.nil?
+
+        focus_identity(@bridge.snapshot) != @leftover_focus_identity
+      end
+
+      def leftover_document_focus(code, leftover_while_unfocused)
+        return nil unless code == 'leftover_document'
+        return nil if leftover_while_unfocused
+
+        focus_identity(@bridge.snapshot)
       end
 
       def leftover_close_next(leftover)
@@ -611,15 +633,18 @@ module SkRubyMcp
         @bridge.snapshot
       end
 
-      def store_failure(code, message, next_step: nil)
-        # :restore оставляем в @pending, иначе timeout не откроет previous_path.
-        @pending = nil unless @pending && (@pending[:kind] == :restore)
+      def store_failure(code, message, next_step: nil, leftover_while_unfocused: false, keep_pending: false)
+        @pending = nil unless keep_pending
+        @leftover_while_unfocused = leftover_while_unfocused
+        @leftover_focus_identity = leftover_document_focus(code, leftover_while_unfocused)
         @last_failure = failure(code, message, next_step: next_step)
       end
 
       def clear_failure
         @last_failure = nil
         @timeout_requested = nil
+        @leftover_while_unfocused = false
+        @leftover_focus_identity = nil
       end
 
       def hint_for(code)
