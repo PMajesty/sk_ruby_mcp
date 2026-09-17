@@ -127,7 +127,14 @@ module SkRubyMcp
       end
 
       def name_of(ent)
-        ent.respond_to?(:name) ? ent.name.to_s : ''
+        if ent.respond_to?(:name)
+          named = ent.name.to_s
+          return named unless named.empty?
+        end
+        definition = ent.definition if ent.respond_to?(:definition)
+        return definition.name.to_s if definition.respond_to?(:name)
+
+        ''
       end
 
       def entity_id(ent)

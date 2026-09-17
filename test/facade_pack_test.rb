@@ -718,4 +718,49 @@ class FacadePackTest < Minitest::Test
     assert_raises(ArgumentError) { Pack::CameraArgument.resolve(nil, 'relative.json', probe: probe) }
     assert_raises(ArgumentError) { Pack::CameraArgument.resolve(nil, '//server/share/cam.json', probe: probe) }
   end
+
+  def test_empty_camera_hash_is_omitted
+    assert_nil Pack::CameraArgument.resolve({}, nil)
+    assert_nil Pack::CameraArgument.resolve(nil, '  ')
+  end
+
+  def test_incomplete_camera_raises_argument_error
+    error = assert_raises(ArgumentError) { Pack::CameraArgument.resolve({ 'fov_deg' => 30.0 }, nil) }
+    assert_includes error.message, 'eye_m'
+  end
+
+  def test_faces_finds_unnamed_instance_by_definition_name
+    unnamed = FakeInstance.new('', @tower.definition, @model.entities)
+    @model.entities.items << unnamed
+    body = parsed(tool(Pack::Faces).call('object' => 'Tower def'))
+    assert_equal true, body['ok'], body.inspect
+    assert_equal 1, body['count']
+  end
+
+  def test_faces_mutating_gate_follows_boolean_parsing
+    faces = tool(Pack::Faces)
+    assert faces.holds_mutating_gate?('make_unique' => true)
+    assert faces.holds_mutating_gate?('make_unique' => 1)
+    assert faces.holds_mutating_gate?('make_unique' => 'yes')
+    assert faces.holds_mutating_gate?('make_unique' => '1')
+    refute faces.holds_mutating_gate?('object' => 'Tower')
+    refute faces.holds_mutating_gate?('make_unique' => false)
+    refute faces.holds_mutating_gate?('make_unique' => 'no')
+    refute faces.holds_mutating_gate?('make_unique' => 'maybe')
+  end
+
+  def test_faces_image_size_accepts_whole_number_strings
+    parsed_args = tool(Pack::Faces).send(
+      :parse_arguments,
+      'object' => 'Tower',
+      'image_width' => '1600',
+      'image_height' => '1000'
+    )
+    assert_equal 1600, parsed_args[:image_w]
+    assert_equal 1000, parsed_args[:image_h]
+    error = assert_raises(ArgumentError) do
+      tool(Pack::Faces).send(:parse_arguments, 'object' => 'Tower', 'image_width' => '1600.5')
+    end
+    assert_includes error.message, 'integer'
+  end
 end

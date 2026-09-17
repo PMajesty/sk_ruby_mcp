@@ -433,4 +433,17 @@ class ArchitectPackTest < Minitest::Test
     spec = Pack::ListGroups.new(session: @session, attach: @attach).spec
     assert_equal true, spec[:annotations][:readOnlyHint]
   end
+
+  def test_list_groups_accepts_whole_number_strings
+    listed = Pack::ListGroups.new(session: @session, attach: @attach).call('max_depth' => '2', 'max_items' => '8')
+    body = parsed(listed)
+    assert_equal true, body['ok'], body.inspect
+    refute listed[:isError]
+  end
+
+  def test_list_groups_rejects_fractional_strings
+    listed = Pack::ListGroups.new(session: @session, attach: @attach).call('max_depth' => '2.5')
+    assert listed[:isError]
+    assert_equal 'unknown_arguments', parsed(listed)['error']
+  end
 end

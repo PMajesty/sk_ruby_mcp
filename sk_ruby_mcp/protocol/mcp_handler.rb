@@ -15,7 +15,7 @@ module SkRubyMcp
         @instructions = instructions
         @call_gate = call_gate
         @on_cancel = on_cancel
-        @tools_list_result = { tools: tools.map(&:spec) }.freeze
+        @tools_list_result = { tools: tools.map { |tool| Tools::SchemaAdvertiser.advertise(tool.spec) } }.freeze
       end
 
       # Hash ответа или nil, если ответ не нужен (уведомление либо ответ клиента).
@@ -75,19 +75,41 @@ module SkRubyMcp
         tool.respond_to?(:polls_while_busy?) && tool.polls_while_busy?
       end
 
+      def read_only_tool?(tool)
+        if tool.class.const_defined?(:ANNOTATIONS)
+          return tool.class::ANNOTATIONS[:readOnlyHint] == true
+        end
+
+        spec = tool.respond_to?(:spec) ? tool.spec : nil
+        return false unless spec.is_a?(Hash)
+
+        annotations = spec[:annotations] || spec['annotations']
+        return false unless annotations.is_a?(Hash)
+
+        annotations[:readOnlyHint] == true || annotations['readOnlyHint'] == true
+      end
+
+      def holds_mutating_gate?(tool, arguments)
+        return false if polls_while_busy?(tool)
+        return tool.holds_mutating_gate?(arguments) if tool.respond_to?(:holds_mutating_gate?)
+
+        !read_only_tool?(tool)
+      end
+
       def call_tool(params, id)
         name = params['name'].to_s
         tool = @tools[name]
         raise JsonRpc::ProtocolError.new(JsonRpc::INVALID_PARAMS, "Unknown tool: #{params['name']}", id: id) unless tool
 
-        if !polls_while_busy?(tool) && @call_gate && !@call_gate.try_mutating
+        arguments = params['arguments']
+        arguments = {} unless arguments.is_a?(Hash)
+        if holds_mutating_gate?(tool, arguments) && @call_gate && !@call_gate.try_mutating
           return Tools::ToolReply.call(GATE_BUSY)
         end
 
         @in_flight_id = id
-        arguments = params['arguments']
-        result = tool.call(arguments.is_a?(Hash) ? arguments : {})
-        if result.is_a?(Runtime::Deferred) && @call_gate && !polls_while_busy?(tool)
+        result = tool.call(arguments)
+        if result.is_a?(Runtime::Deferred) && @call_gate && holds_mutating_gate?(tool, arguments)
           result.attach_gate(@call_gate)
         end
         result

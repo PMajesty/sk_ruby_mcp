@@ -131,5 +131,109 @@ module SkRubyMcp
       },
       required: ['ok']
     }.freeze
+
+    # Копия spec для tools/list: без union-типов и описаний длиннее лимита провайдеров.
+    module SchemaAdvertiser
+      MAX_DESCRIPTION = 1024
+      ELLIPSIS = '...'
+
+      module_function
+
+      def advertise(spec)
+        return spec unless spec.is_a?(Hash)
+
+        walk(dup_node(spec))
+      end
+
+      def dup_node(node)
+        case node
+        when Hash
+          node.each_with_object({}) { |(key, value), copy| copy[key] = dup_node(value) }
+        when Array
+          node.map { |value| dup_node(value) }
+        else
+          node
+        end
+      end
+
+      def walk(node)
+        case node
+        when Hash
+          collapse_type!(node)
+          ensure_object_properties!(node)
+          clip_description_fields!(node)
+          node.each_value { |value| walk(value) }
+          node
+        when Array
+          node.each { |value| walk(value) }
+          node
+        else
+          node
+        end
+      end
+
+      def collapse_type!(node)
+        type = node[:type] || node['type']
+        return unless type.is_a?(Array)
+
+        names = type.map(&:to_s).sort
+        replacement =
+          if names == %w[integer string]
+            'string'
+          elsif names == %w[null string]
+            'string'
+          end
+        return unless replacement
+
+        if node.key?(:type)
+          node[:type] = replacement
+        else
+          node['type'] = replacement
+        end
+      end
+
+      def ensure_object_properties!(node)
+        type = node[:type] || node['type']
+        object_type = type == 'object' || (type.is_a?(Array) && type.map(&:to_s).include?('object'))
+        return unless object_type
+        return unless additional_properties_open?(node)
+        return if node.key?(:properties) || node.key?('properties')
+
+        if symbol_keys?(node)
+          node[:properties] = {}
+        else
+          node['properties'] = {}
+        end
+      end
+
+      def additional_properties_open?(node)
+        if node.key?(:additionalProperties)
+          node[:additionalProperties] == true
+        elsif node.key?('additionalProperties')
+          node['additionalProperties'] == true
+        else
+          false
+        end
+      end
+
+      def symbol_keys?(node)
+        node.keys.any? { |key| key.is_a?(Symbol) }
+      end
+
+      def clip_description_fields!(node)
+        node[:description] = clip_description(node[:description]) if node.key?(:description)
+        node['description'] = clip_description(node['description']) if node.key?('description')
+      end
+
+      def clip_description(text)
+        return text unless text.is_a?(String) && text.length > MAX_DESCRIPTION
+
+        budget = MAX_DESCRIPTION - ELLIPSIS.length
+        cut = text[0, budget]
+        space = cut.rindex(/[[:space:]]/)
+        cut = cut[0, space] if space && space >= (budget * 0.7)
+        "#{cut.rstrip}#{ELLIPSIS}"
+      end
+    end
   end
 end

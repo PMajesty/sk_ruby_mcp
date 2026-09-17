@@ -127,6 +127,23 @@ class McpHandlerTest < Minitest::Test
     assert_equal({ tools: [@tool.spec] }, handle('tools/list', { 'cursor' => nil })[:result])
   end
 
+  def test_tools_list_advertises_provider_safe_schemas
+    listed = ListedSchemaTool.new
+    handler = McpHandler.new(
+      tools: [listed],
+      server_info: { name: 'srv', version: '1' },
+      instructions: 'hi'
+    )
+    tools = handler.handle(TestSupport.json_rpc('tools/list'))[:result][:tools]
+    spec = tools.first
+    assert_equal 'string', spec[:inputSchema][:properties][:faces][:type]
+    assert_equal({}, spec[:inputSchema][:properties][:recovery][:properties])
+    assert_equal true, spec[:inputSchema][:properties][:recovery][:additionalProperties]
+    assert spec[:description].length <= SkRubyMcp::Tools::SchemaAdvertiser::MAX_DESCRIPTION
+    assert_equal %w[string integer], listed.spec[:inputSchema][:properties][:faces][:type]
+    refute listed.spec[:inputSchema][:properties][:recovery].key?(:properties)
+  end
+
   def test_tools_call_passes_string_keyed_arguments
     response = handle('tools/call', { 'name' => 'echo', 'arguments' => { 'text' => 'yo' } }, id: 'call-1')
     assert_equal 'call-1', response[:id]
@@ -248,6 +265,43 @@ class McpHandlerTest < Minitest::Test
     assert_equal 'yo', response[:result][:content].first[:text]
   end
 
+  def test_read_only_tool_answers_when_the_gate_is_held
+    gate = SkRubyMcp::Runtime::ToolCallGate.new
+    gate.try_mutating
+    listed = ReadOnlyTool.new
+    handler = McpHandler.new(
+      tools: [@tool, listed],
+      server_info: { name: 'srv', version: '1' },
+      instructions: 'hi',
+      call_gate: gate
+    )
+    response = handler.handle(TestSupport.json_rpc('tools/call', { 'name' => 'list_groups' }))
+    refute response[:result][:isError]
+    assert_equal 'listed', response[:result][:content].first[:text]
+    assert listed.called
+  end
+
+  def test_facade_faces_without_make_unique_answers_when_the_gate_is_held
+    gate = SkRubyMcp::Runtime::ToolCallGate.new
+    gate.try_mutating
+    faces = FacesProbe.new
+    handler = McpHandler.new(
+      tools: [@tool, faces],
+      server_info: { name: 'srv', version: '1' },
+      instructions: 'hi',
+      call_gate: gate
+    )
+    response = handler.handle(TestSupport.json_rpc('tools/call', { 'name' => 'facade_faces', 'arguments' => { 'object' => 'Tower' } }))
+    refute response[:result][:isError]
+    assert_equal 'faces', response[:result][:content].first[:text]
+    mutating = handler.handle(TestSupport.json_rpc('tools/call', { 'name' => 'facade_faces', 'arguments' => { 'object' => 'Tower', 'make_unique' => true } }))
+    assert mutating[:result][:isError]
+    assert_includes mutating[:result][:content].first[:text], 'busy'
+    yes = handler.handle(TestSupport.json_rpc('tools/call', { 'name' => 'facade_faces', 'arguments' => { 'object' => 'Tower', 'make_unique' => 'yes' } }))
+    assert yes[:result][:isError]
+    assert_includes yes[:result][:content].first[:text], 'busy'
+  end
+
   def test_model_status_is_answered_when_the_gate_is_held
     gate = SkRubyMcp::Runtime::ToolCallGate.new
     gate.try_mutating
@@ -262,6 +316,80 @@ class McpHandlerTest < Minitest::Test
     refute response[:result][:isError]
     assert_equal 'ok: true', response[:result][:content].first[:text]
     assert status.called
+  end
+
+  class ReadOnlyTool
+    attr_reader :called
+
+    def initialize
+      @called = false
+    end
+
+    def name
+      'list_groups'
+    end
+
+    def spec
+      { name: 'list_groups', annotations: { readOnlyHint: true } }
+    end
+
+    def holds_mutating_gate?(_arguments)
+      false
+    end
+
+    def call(_arguments)
+      @called = true
+      { content: [{ type: 'text', text: 'listed' }], isError: false }
+    end
+  end
+
+  class ListedSchemaTool
+    def name
+      'union_probe'
+    end
+
+    def spec
+      {
+        name: 'union_probe',
+        description: 'word ' * 400,
+        inputSchema: {
+          type: 'object',
+          properties: {
+            faces: { type: %w[string integer] },
+            recovery: { type: 'object', additionalProperties: true }
+          }
+        }
+      }
+    end
+
+    def call(_arguments)
+      { content: [{ type: 'text', text: 'ok' }], isError: false }
+    end
+  end
+
+  class FacesProbe
+    attr_reader :received
+
+    def initialize
+      @live = SkRubyMcp::Tools::FacadePack::Faces.new(session: Object.new, attach: Object.new)
+    end
+
+    def name
+      'facade_faces'
+    end
+
+    def spec
+      { name: 'facade_faces', annotations: { readOnlyHint: false } }
+    end
+
+    def holds_mutating_gate?(arguments)
+      @live.holds_mutating_gate?(arguments)
+    end
+
+    def call(arguments)
+      @received = arguments
+      { content: [{ type: 'text', text: 'faces' }], isError: false }
+    end
   end
 
   class StatusTool

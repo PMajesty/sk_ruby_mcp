@@ -94,6 +94,7 @@ module SkRubyMcp
       ITEM_SCHEMA = {
         type: 'object',
         description: 'One opening rule. face (id from facade_faces). kind small_window|large_window|glass_door|storefront|custom. Horizontal: x0 and x1 as fractions 0..1 of the face width from its left edge as the camera sees it, or u0_m + width_m, or x_center + width_m. Vertical: storey (index from storey_cells), storeys (list or "all"), or z0_m + z1_m world metres; y0/y1 fractions of the storey cell or sill_m/head_m override the kind defaults. count repeats the opening count times inside x0..x1 (each w fraction or width_m). frame_edges subset of left,right,top,bottom; frame_w_m (default 0.3), frame_out_m (default 0.15, keep 0.1 or more so the frame does not z-fight the wall from far cameras), recess_m (default 0.25), frame_color, glass_color, mullions, transom, label.',
+        properties: {},
         additionalProperties: true
       }.freeze
 
@@ -102,12 +103,15 @@ module SkRubyMcp
         module_function
 
         def resolve(camera, camera_file, probe: nil)
-          return from_file(camera_file, probe) if camera_file
-          return nil if camera.nil?
+          file = camera_file.to_s.strip
+          return from_file(file, probe) unless file.empty?
+          return nil if camera.nil? || (camera.is_a?(Hash) && camera.empty?)
           raise ArgumentError, 'camera must be an object' unless camera.is_a?(Hash)
 
           eye = triple(camera['eye_m'], 'camera.eye_m')
           target = triple(camera['target_m'], 'camera.target_m')
+          raise ArgumentError, 'camera needs eye_m and target_m' if eye.nil? || target.nil?
+
           up = triple(camera['up'], 'camera.up') || [0.0, 0.0, 1.0]
           {
             eye: eye.map { |n| Runtime::ArchitectMath.m_to_in(n) },
@@ -214,12 +218,12 @@ module SkRubyMcp
         TITLE = 'Façade faces of an object'
         DESCRIPTION = <<~TEXT.strip
           List the vertical faces of a named group or component that face the camera, with sizes in metres, world corners, the pixel quad of each face in an image of image_width×image_height taken with that camera, storey levels found from thin floor plates, and storey cells (index, z0_m, z1_m). Faces are ordered left to right as the camera sees them; x0/x1 fractions in facade_place_openings count from the same left edge. Use this first: its face ids feed every other facade tool, and its pixel quads let a script rectify each face out of a photo or a capture. Camera: camera (metres) or camera_file (a JSON snapshot with eye/target/up/fov in inches); omit both for the live viewport camera. make_unique true makes a shared component unique so face ids stay valid; otherwise nothing changes.
-          Arguments: object (required name or nested path). camera, camera_file (optional). image_width, image_height (optional, default the viewport size). min_area_m2 (default 1.0). min_dot (default 0.12; smaller keeps more grazing faces). make_unique (default false). write_to (optional file path; the same reply is also written there as JSON for scripts such as facade_rectify.py).
+          Arguments: object (required instance name, component definition name, or nested path; unnamed instances with no definition name are listed as (unnamed)). camera, camera_file (optional). image_width, image_height (optional, default the viewport size). min_area_m2 (default 1.0). min_dot (default 0.12; smaller keeps more grazing faces). make_unique (default false). write_to (optional file path; the same reply is also written there as JSON for scripts such as facade_rectify.py).
         TEXT
         INPUT_SCHEMA = {
           type: 'object',
           properties: {
-            object: { type: 'string', description: 'Group or component name, or nested path (Building/Form 3).' },
+            object: { type: 'string', description: 'Instance name, component definition name, or nested path (Building/Form 3). Unnamed instances with no definition name are (unnamed).' },
             camera: CAMERA_SCHEMA,
             camera_file: { type: 'string', description: 'JSON file with a camera block: eye, target, up in inches, fov in degrees.' },
             image_width: { type: 'integer', minimum: 64, maximum: 8192 },
@@ -234,6 +238,14 @@ module SkRubyMcp
         }.freeze
         ALLOWED_KEYS = INPUT_SCHEMA[:properties].keys.map(&:to_s).freeze
         ANNOTATIONS = { title: TITLE, readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }.freeze
+
+        def holds_mutating_gate?(arguments)
+          return false unless arguments.is_a?(Hash)
+
+          boolean(arguments['make_unique'], 'make_unique') == true
+        rescue ArgumentError
+          false
+        end
 
         def parse_arguments(arguments)
           {
@@ -282,7 +294,7 @@ module SkRubyMcp
           properties: {
             object: { type: 'string', description: 'Group or component name, or nested path.' },
             items: { type: 'array', items: ITEM_SCHEMA, minItems: 1, description: 'Opening rules.' },
-            defaults: { type: 'object', description: 'Defaults merged under every item (kind, frame_*, recess_m, glass_color, storeys_m, ...).', additionalProperties: true },
+            defaults: { type: 'object', description: 'Defaults merged under every item (kind, frame_*, recess_m, glass_color, storeys_m, ...).', properties: {}, additionalProperties: true },
             replace: { type: 'boolean', description: 'Remove existing openings on the touched faces first (default false).' }
           },
           required: %w[object items],
@@ -469,7 +481,7 @@ module SkRubyMcp
           properties: {
             object: { type: 'string' },
             items: { type: 'array', items: ITEM_SCHEMA, minItems: 1 },
-            defaults: { type: 'object', additionalProperties: true },
+            defaults: { type: 'object', properties: {}, additionalProperties: true },
             tol_m: { type: 'number' }
           },
           required: %w[object items],

@@ -35,6 +35,10 @@ module SkRubyMcp
         }
       end
 
+      def holds_mutating_gate?(_arguments)
+        self.class::ANNOTATIONS[:readOnlyHint] != true
+      end
+
       def call(arguments)
         arguments = {} unless arguments.is_a?(Hash)
         unknown = ArgumentGuard.unknown_message(arguments, self.class::ALLOWED_KEYS)
@@ -136,11 +140,15 @@ module SkRubyMcp
 
       def integer(value, name)
         return nil if value.nil?
-        unless value.is_a?(Integer) || (value.is_a?(Numeric) && value == value.to_i)
-          raise ArgumentError, "#{name} must be an integer"
+        if value.is_a?(Integer) || (value.is_a?(Numeric) && value == value.to_i)
+          return value.to_i
+        end
+        if value.is_a?(String)
+          stripped = value.strip
+          return stripped.to_i if stripped.match?(/\A-?\d+\z/)
         end
 
-        value.to_i
+        raise ArgumentError, "#{name} must be an integer"
       end
 
       def text(value)
